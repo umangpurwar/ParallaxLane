@@ -1,6 +1,7 @@
 from django.db import models
 from django.conf import settings
 
+
 class Organisation(models.Model):
 
     PLAN_FREE = "free"
@@ -36,9 +37,12 @@ class Organisation(models.Model):
     max_candidates = models.IntegerField(default=30)
     proctoring_enabled = models.BooleanField(default=False)
 
+    max_admins = models.IntegerField(default=2)
+    max_invigilators = models.IntegerField(default=5)
+
     def __str__(self):
         return f"{self.name} ({self.plan})"
-    
+
 
 class OrganisationMember(models.Model):
 
@@ -76,13 +80,15 @@ class OrganisationMember(models.Model):
 
     def __str__(self):
         return f"{self.user} @ {self.organisation} ({self.role})"
-    
+
+
 class OrganisationInvite(models.Model):
     organisation = models.ForeignKey(
         Organisation,
         on_delete=models.CASCADE,
         related_name="invites"
     )
+
     email = models.EmailField()
     role = models.CharField(max_length=20, default="candidate")
     token = models.CharField(max_length=100, unique=True)
