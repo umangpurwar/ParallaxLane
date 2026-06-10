@@ -85,19 +85,33 @@ const createOrg = async () => {
 
     const data = response.data
 
+    // 1. Safely extract values using the fallback pattern
+    const slug = data.slug || data.org
+    const orgName = data.name
+    const plan = data.plan
+
+    // 2. Strict validation to prevent writing undefined values
+    if (!slug) {
+      throw new Error('Organisation identifier missing from response.')
+    }
+
+    // 3. Save only valid values to localStorage
     setAuthData({
-      org_slug: data.slug,
+      org_slug: slug,
       org_role: 'owner',
-      org_name: data.name,
-      org_plan: data.plan
+      org_name: orgName || name.value.trim(), // Optional fallback to input name
+      org_plan: plan || 'free'                // Optional fallback plan
     })
 
     router.push('/dashboard')
   } catch (error) {
     console.error('Failed to create organisation:', error)
+    
     if (error.response && error.response.data) {
       const errors = Object.values(error.response.data).flat()
       errorMessage.value = errors[0] || 'Failed to create organisation.'
+    } else if (error.message === 'Organisation identifier missing from response.') {
+      errorMessage.value = 'Invalid server response. Please try again.'
     } else {
       errorMessage.value = 'A network error occurred. Please try again.'
     }

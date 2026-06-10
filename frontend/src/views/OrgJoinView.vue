@@ -85,17 +85,29 @@ const joinOrg = async () => {
 
     const data = response.data
 
+    // ✅ Defensive extraction
+    const slug = data.org_slug || data.slug || null
+    const name = data.org_name || data.name || null
+    const plan = data.org_plan || data.plan || null
+    const role = data.org_role || 'candidate'
+    // ❌ HARD STOP if slug missing
+    if (!slug) {
+      throw new Error('Organisation data missing from response')
+    }
+    // ✅ Safe storage
     setAuthData({
-      org_slug: data.org_slug,
-      org_role: data.org_role,
-      org_name: data.org_name,
-      org_plan: data.org_plan
+      org_slug: slug,
+      org_role: role,
+      org_name: name || 'Organisation',
+      org_plan: plan || 'free'
     })
 
     router.push('/dashboard')
   } catch (error) {
     console.error('Failed to join organisation:', error)
-    if (error.response && error.response.data) {
+    if (error.message === 'Organisation data missing from response') {
+      errorMessage.value = 'Invalid invite response. Please try again.'
+    } else if (error.response && error.response.data) {
       const errors = Object.values(error.response.data).flat()
       errorMessage.value = errors[0] || 'Invalid or expired invite code.'
     } else {

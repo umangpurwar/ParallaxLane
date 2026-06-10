@@ -349,6 +349,16 @@ const upcomingExams = computed(() => {
 })
 
 const startExam = (examId) => {
+  // 1. Remove specific safe keys
+  localStorage.removeItem("attempt_id");
+  localStorage.removeItem("active_exam_id");
+  // 2. Safely iterate and remove any keys starting with 'exam_state_'
+  Object.keys(localStorage).forEach(key => {
+    if (key.startsWith("exam_state_")) {
+      localStorage.removeItem(key);
+    }
+  });
+  // 3. Initialize new exam state and navigate
   localStorage.setItem("active_exam_id", examId);
   router.push({
     name: 'Exam',
