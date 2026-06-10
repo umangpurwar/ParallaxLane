@@ -16,39 +16,26 @@ class QuestionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Question
         fields = [
-            "id",
-            "text",
-            "question_type",
-            "points",
-            "negative_points",
-            "order",
-            "image",
-            "options",
-            "correct_text_answer",
-            "explanation",
+            "id", "text", "question_type", "points", "negative_points",
+            "order", "image", "options", "correct_text_answer", "explanation",
         ]
 
     def create(self, validated_data):
         options_data = validated_data.pop("options", [])
         question = Question.objects.create(**validated_data)
-
         for option_data in options_data:
             QuestionOption.objects.create(question=question, **option_data)
-
         return question
 
     def update(self, instance, validated_data):
         options_data = validated_data.pop("options", None)
-
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
-
         if options_data is not None:
             instance.options.all().delete()
             for option_data in options_data:
                 QuestionOption.objects.create(question=instance, **option_data)
-
         return instance
 
 
@@ -58,72 +45,40 @@ class ExamSerializer(serializers.ModelSerializer):
     class Meta:
         model = Exam
         fields = [
-            "id",
-            "title",
-            "description",
-            "start_time",
-            "end_time",
-            "duration",
-            "created_by",
-            "organisation",
-            "is_published",
-            "is_active",
-            "violation_limit",
-            "auto_submit_on_violation",
-            "created_at",
-            "questions",
+            "id", "title", "description", "start_time", "end_time", "duration",
+            "created_by", "organisation", "is_published", "is_active",
+            "violation_limit", "auto_submit_on_violation", "created_at", "questions",
         ]
+        # FIX: these are set by the view via save(), not by client
+        read_only_fields = ["created_by", "organisation", "created_at", "id"]
 
     @transaction.atomic
     def create(self, validated_data):
         request = self.context.get("request")
         org = request.user.current_organisation
-
         features = get_plan_features(org)
         allowed_types = features.get("allowed_question_types", [])
-
         questions_data = validated_data.pop("questions")
 
-        # validate first
         if len(questions_data) > features["max_questions"]:
-            raise serializers.ValidationError(
-                {"error": "Question limit exceeded for your plan"}
-            )
+            raise serializers.ValidationError({"error": "Question limit exceeded for your plan"})
 
         for question_data in questions_data:
             q_type = question_data.get("question_type", "mcq")
-
             if q_type not in allowed_types:
-                raise serializers.ValidationError(
-                    {"error": f"Question type '{q_type}' is not allowed in your plan"}
-                )
-
+                raise serializers.ValidationError({"error": f"Question type '{q_type}' not allowed in your plan"})
             if question_data.get("image") and not features["image_questions"]:
-                raise serializers.ValidationError(
-                    {"error": "Image-based questions not allowed in your plan"}
-                )
-
+                raise serializers.ValidationError({"error": "Image-based questions not allowed in your plan"})
             if q_type == "file_upload" and not features["file_upload"]:
-                raise serializers.ValidationError(
-                    {"error": "File upload questions not allowed in your plan"}
-                )
+                raise serializers.ValidationError({"error": "File upload questions not allowed in your plan"})
 
-        # create exam only AFTER validation
         exam = Exam.objects.create(**validated_data)
 
         for question_data in questions_data:
             options_data = question_data.pop("options", [])
-
-            question = Question.objects.create(
-                exam=exam,
-                **question_data
-            )
-
+            question = Question.objects.create(exam=exam, **question_data)
             for option_data in options_data:
-                QuestionOption.objects.create(
-                    question=question,
-                    **option_data
-                )
+                QuestionOption.objects.create(question=question, **option_data)
 
         return exam
 
@@ -131,10 +86,8 @@ class ExamSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         request = self.context.get("request")
         org = request.user.current_organisation
-
         features = get_plan_features(org)
         allowed_types = features.get("allowed_question_types", [])
-
         questions_data = validated_data.pop("questions", None)
 
         for attr, value in validated_data.items():
@@ -142,46 +95,23 @@ class ExamSerializer(serializers.ModelSerializer):
         instance.save()
 
         if questions_data is not None:
-
             if len(questions_data) > features["max_questions"]:
-                raise serializers.ValidationError(
-                    {"error": "Question limit exceeded for your plan"}
-                )
-
-            # validate first
+                raise serializers.ValidationError({"error": "Question limit exceeded for your plan"})
             for question_data in questions_data:
                 q_type = question_data.get("question_type", "mcq")
-
                 if q_type not in allowed_types:
-                    raise serializers.ValidationError(
-                        {"error": f"Question type '{q_type}' is not allowed in your plan"}
-                    )
-
+                    raise serializers.ValidationError({"error": f"Question type '{q_type}' not allowed in your plan"})
                 if question_data.get("image") and not features["image_questions"]:
-                    raise serializers.ValidationError(
-                        {"error": "Image-based questions not allowed in your plan"}
-                    )
-
+                    raise serializers.ValidationError({"error": "Image-based questions not allowed in your plan"})
                 if q_type == "file_upload" and not features["file_upload"]:
-                    raise serializers.ValidationError(
-                        {"error": "File upload questions not allowed in your plan"}
-                    )
+                    raise serializers.ValidationError({"error": "File upload questions not allowed in your plan"})
 
             instance.questions.all().delete()
-
             for question_data in questions_data:
                 options_data = question_data.pop("options", [])
-
-                question = Question.objects.create(
-                    exam=instance,
-                    **question_data
-                )
-
+                question = Question.objects.create(exam=instance, **question_data)
                 for option_data in options_data:
-                    QuestionOption.objects.create(
-                        question=question,
-                        **option_data
-                    )
+                    QuestionOption.objects.create(question=question, **option_data)
 
         return instance
 
@@ -189,15 +119,7 @@ class ExamSerializer(serializers.ModelSerializer):
 class AnswerSerializer(serializers.ModelSerializer):
     class Meta:
         model = Answer
-        fields = [
-            "id",
-            "attempt",
-            "question",
-            "selected_option",
-            "text_answer",
-            "file_upload",
-            "is_correct",
-        ]
+        fields = ["id", "attempt", "question", "selected_option", "text_answer", "file_upload", "is_correct"]
 
 
 class ExamAttemptSerializer(serializers.ModelSerializer):
@@ -206,18 +128,9 @@ class ExamAttemptSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExamAttempt
         fields = [
-            "id",
-            "user",
-            "exam",
-            "start_time",
-            "end_time",
-            "points_scored",
-            "total_points",
-            "risk_score",
-            "total_violations",
-            "status",
-            "last_active",
-            "answers",
+            "id", "user", "exam", "start_time", "end_time",
+            "points_scored", "total_points", "risk_score",
+            "total_violations", "status", "last_active", "answers",
         ]
 
 
@@ -226,27 +139,10 @@ class ExamDetailSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Exam
-        fields = [
-            "id",
-            "title",
-            "description",
-            "duration",
-            "start_time",
-            "end_time",
-            "is_active",
-            "is_published",
-            "questions",
-        ]
+        fields = ["id", "title", "description", "duration", "start_time", "end_time", "is_active", "is_published", "questions"]
+
 
 class ExamListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Exam
-        fields = [
-            "id",
-            "title",
-            "description",
-            "duration",
-            "start_time",
-            "end_time",
-            "is_active",
-        ]
+        fields = ["id", "title", "description", "duration", "start_time", "end_time", "is_active"]
