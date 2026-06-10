@@ -1,5 +1,5 @@
 <template>
-  <div class="mt-2 bg-gray-50 border-2 border-brutal-border p-4 flex flex-col gap-3">
+  <div class="bg-[#e8e4d9] p-4 flex flex-col gap-3">
     
     <div class="flex justify-between items-center">
       <span class="text-[9px] uppercase tracking-widest font-bold text-gray-500">
@@ -21,8 +21,8 @@
         v-model="captchaInput"
         @input="verifyCaptcha"
         type="text"
-        placeholder="enter here"
-        class="w-full bg-white border-2 border-brutal-border py-2 px-3 text-center text-brutal-ink font-bold tracking-widest text-[12px] placeholder-gray-400 focus:outline-none focus:border-brutal-ink transition-colors pr-10"
+        placeholder="enter captcha here"
+        class="w-full hover:bg-[#e8e4d9] border-2 border-brutal-border py-2 px-3 text-center text-brutal-ink font-bold tracking-widest text-[12px] placeholder-gray-400 focus:outline-none focus:border-brutal-ink transition-colors pr-10"
       />
 
       <!-- checkmark -->

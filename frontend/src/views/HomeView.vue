@@ -10,7 +10,7 @@
         <div v-if="!isLoading" class="relative z-10 w-[92vw] max-w-[1600px] h-[90vh] mx-auto mt-[5vh] bg-[#e3dfd5] shadow-2xl flex flex-col overflow-hidden">
             <!-- Grid Lines -->
             <div class="absolute inset-0 pointer-events-none z-0">
-                <div class="grid-line-v left-[25%]"></div>
+                <!-- <div class="grid-line-v left-[25%]"></div> -->
                 <div class="grid-line-v left-[50%]"></div>
                 <div class="grid-line-h top-[35%]"></div>
                 <div class="grid-line-h top-[65%]"></div>

@@ -15,6 +15,10 @@ import os
 from decouple import config
 from datetime import timedelta
 import cloudinary
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -166,13 +170,15 @@ REDIS_URL = config("REDIS_URL")
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": REDIS_URL,
+        "LOCATION": os.getenv("REDIS_URL"),
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            "CONNECTION_POOL_KWARGS": {
+                "ssl_cert_reqs": None
+            }
         }
     }
 }
-
 
 cloudinary.config(
     cloud_name=config("CLOUDINARY_CLOUD_NAME"),
@@ -190,3 +196,5 @@ REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
 }
+
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'

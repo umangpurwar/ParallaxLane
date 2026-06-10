@@ -7,7 +7,7 @@ import ExamDashboard from "../views/ExamDashboard.vue"
 import ExamPage from "../views/ExamPage.vue"
 import AdminDashboard from "../views/AdminDashboard.vue"
 import UnauthorizedView from "../views/UnauthorizedView.vue"
-
+import OrgHomeView from "../views/OrgHomeView.vue"
 import OrgCreateView from "../views/OrgCreateView.vue"
 
 const routes = [
@@ -20,6 +20,23 @@ const routes = [
 
   { path: "/dashboard", component: ExamDashboard, meta: { requiresAuth: true } },
   { path: "/exam/:id", name: "Exam", component: ExamPage, meta: { requiresAuth: true } },
+
+  {
+    path: "/auth/google",
+    name: "GoogleAuth",
+    component: () => import("../views/GoogleAuth.vue")
+  },
+
+  {
+    path: "/org-home",
+    component: OrgHomeView,
+    meta: { requiresAuth: true }
+  },
+
+  {
+    path: "/join-org",
+    component: () => import("../views/JoinOrgView.vue")
+  },
 
   { path: "/admin", component: AdminDashboard, meta: { requiresAuth: true, isAdmin: true } }
 ]
@@ -35,12 +52,10 @@ window.addEventListener('popstate', () => {
   isBrowserNavigation = true
 })
 
-/* ✅ Helper: clear ONLY exam-related data */
 const clearExamState = () => {
   localStorage.removeItem("attempt_id")
   localStorage.removeItem("active_exam_id")
 
-  // remove all exam_state_* keys
   Object.keys(localStorage).forEach(key => {
     if (key.startsWith("exam_state_")) {
       localStorage.removeItem(key)
@@ -55,22 +70,19 @@ router.beforeEach((to, from) => {
 
   const isAdmin = orgRole === "owner" || orgRole === "admin"
 
-  /* ✅ FIXED: Smart Back Button Handling */
+  // Handle browser back navigation (exam safety)
   if (isBrowserNavigation && token) {
     isBrowserNavigation = false
 
-    // ONLY trigger if user is coming FROM exam page
     if (from.path.startsWith("/exam")) {
       clearExamState()
-
-      // redirect safely
       return "/dashboard"
     }
   }
 
   isBrowserNavigation = false
 
-  // Auth Check
+  // Auth check
   if (to.meta.requiresAuth && !token) {
     if (to.path !== '/login' && to.path !== '/') {
       return "/unauthorized"
@@ -78,16 +90,21 @@ router.beforeEach((to, from) => {
     return "/login"
   }
 
-  // Org onboarding check
+  // Prevent logged-in users from going to login/register
+  if (token && (to.path === "/login" || to.path === "/register")) {
+    return "/org-home"
+  }
+
+  // Org onboarding flow
   if (token && !orgSlug) {
-    if (to.path !== "/create-org") {
-      return "/create-org"
+    if (to.path !== "/org-home" && to.path !== "/create-org" && to.path !== "/join-org") {
+      return "/org-home"
     }
   }
 
-  // Prevent going back to create-org
+  // Prevent going back to create-org after org exists
   if (token && orgSlug && to.path === "/create-org") {
-    return "/dashboard"
+    return "/org-home"
   }
 
   // Admin check

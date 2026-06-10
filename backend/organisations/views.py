@@ -7,6 +7,7 @@ from .models import Organisation, OrganisationMember
 from django.contrib.auth import get_user_model
 import uuid
 from .models import OrganisationInvite
+from django.utils.text import slugify
 
 User = get_user_model()
 
@@ -17,13 +18,20 @@ class CreateOrganisationView(APIView):
 
     def post(self, request):
         name = request.data.get("name")
-        slug = request.data.get("slug")
 
-        if not name or not slug:
-            return Response({"error": "name and slug required"}, status=400)
+        if not name:
+            return Response(
+                {"error": "Organisation name is required"},
+                status=400
+            )
 
-        if Organisation.objects.filter(slug=slug).exists():
-            return Response({"error": "slug already exists"}, status=400)
+        base_slug = slugify(name)
+        slug = base_slug
+        counter = 1
+
+        while Organisation.objects.filter(slug=slug).exists():
+            slug = f"{base_slug}-{counter}"
+            counter += 1
 
         org = Organisation.objects.create(
             name=name,
@@ -31,14 +39,12 @@ class CreateOrganisationView(APIView):
             owner=request.user
         )
 
-        # add creator as owner member
         OrganisationMember.objects.create(
             organisation=org,
             user=request.user,
             role="owner"
         )
 
-        # set active org
         request.user.current_organisation = org
         request.user.save()
 
@@ -49,14 +55,18 @@ class CreateOrganisationView(APIView):
             "plan": org.plan,
             "role": "owner"
         })
-
+    
 
 # 2. List my organisations
 class MyOrganisationsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        memberships = OrganisationMember.objects.filter(user=request.user)
+        memberships = (
+            OrganisationMember.objects
+            .filter(user=request.user, is_active=True)
+            .select_related("organisation")
+        )
 
         data = [
             {
@@ -67,7 +77,10 @@ class MyOrganisationsView(APIView):
             for m in memberships
         ]
 
-        return Response(data)
+        return Response({
+            "count": len(data),
+            "organisations": data
+        })
 
 
 #  3. Switch organisation

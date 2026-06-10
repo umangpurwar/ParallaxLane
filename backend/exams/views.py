@@ -52,6 +52,10 @@ class StartExamView(generics.GenericAPIView):
 
         if not exam.is_active:
             return Response({"error": "Exam is disabled"}, status=403)
+        
+
+        if now() > exam.end_time:
+            return Response({"error": "Exam period has ended"}, status=403)
 
         attempt = ExamAttempt.objects.create(
             user=request.user,
@@ -82,6 +86,9 @@ class SubmitExamView(generics.GenericAPIView):
 
         if not exam.is_active:
             return Response({"error": "Exam is disabled"}, status=403)
+        
+        if now() > exam.end_time:
+            return Response({"error": "Exam period has ended"}, status=403)
 
         # Get latest attempt
         attempt = ExamAttempt.objects.filter(

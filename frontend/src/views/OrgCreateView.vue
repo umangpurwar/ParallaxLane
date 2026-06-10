@@ -8,11 +8,21 @@
 
     <div class="relative z-10 max-w-md w-full bg-brutal-paper text-brutal-ink border-4 border-brutal-ink p-10 flex flex-col shadow-[12px_12px_0px_0px_rgba(239,63,35,1)]">
       
-      <h1 class="text-4xl font-black tracking-tighter text-brutal-ink mb-2 uppercase italic">
-        Create Organisation
+      <!-- BACK BUTTON -->
+      <button
+        @click="goBack"
+        class="absolute top-3 left-3 text-[9px] uppercase tracking-widest font-bold text-gray-500 hover:text-brutal-red"
+      >
+        ← Back
+      </button>
+
+      <!-- GREETING -->
+      <h1 class="text-3xl font-black tracking-tighter text-brutal-ink mb-2 uppercase italic text-center">
+        Hello {{ username }}
       </h1>
-      <p class="text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-8 border-b-2 border-brutal-ink pb-4">
-        Establish your command center
+
+      <p class="text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-8 border-b-2 border-brutal-ink pb-4 text-center">
+        Create and manage your workspace
       </p>
 
       <form @submit.prevent="createOrg" class="flex flex-col gap-6">
@@ -34,14 +44,19 @@
           type="submit"
           :disabled="isSubmitting || !name.trim()"
           class="w-full py-5 text-[11px] uppercase tracking-[0.4em] font-black transition-all transform active:scale-95 border-b-4 border-r-4 border-gray-600"
-          :class="(isSubmitting || !name.trim()) ? 'bg-gray-300 text-gray-500 cursor-not-allowed border-transparent' : 'bg-brutal-ink text-white hover:bg-brutal-red hover:border-brutal-ink cursor-pointer'"
+          :class="(isSubmitting || !name.trim()) 
+            ? 'bg-gray-300 text-gray-500 cursor-not-allowed border-transparent' 
+            : 'bg-brutal-ink text-white hover:bg-brutal-red hover:border-brutal-ink cursor-pointer'"
         >
           {{ isSubmitting ? 'Creating...' : 'Create Organisation' }}
         </button>
       </form>
 
       <div class="mt-8 text-center">
-        <router-link to="/join-org" class="text-[9px] uppercase tracking-widest font-bold text-gray-500 hover:text-brutal-red transition-colors">
+        <router-link 
+          to="/join-org" 
+          class="text-[9px] uppercase tracking-widest font-bold text-gray-500 hover:text-brutal-red transition-colors"
+        >
           Have an invite code? Join an organisation
         </router-link>
       </div>
@@ -60,13 +75,18 @@ const router = useRouter()
 const name = ref('')
 const isSubmitting = ref(false)
 const errorMessage = ref('')
+const username = ref('User')
 
 onMounted(() => {
-  const orgSlug = localStorage.getItem("org_slug")
-  if (orgSlug) {
-    router.push('/dashboard')
-  }
+  username.value =
+    localStorage.getItem("username") ||
+    localStorage.getItem("email") ||
+    "User"
 })
+
+const goBack = () => {
+  router.push('/org-home')
+}
 
 const createOrg = async () => {
   errorMessage.value = ''
@@ -96,17 +116,21 @@ const createOrg = async () => {
     }
 
     // 3. Save only valid values to localStorage
-    setAuthData({
-      org_slug: slug,
-      org_role: 'owner',
-      org_name: orgName || name.value.trim(), // Optional fallback to input name
-      org_plan: plan || 'free'                // Optional fallback plan
-    })
+   setAuthData({
+  org_slug: slug,
+  org_role: data.role || 'owner',
+  org_name: orgName || name.value.trim(),
+  org_plan: plan || 'free'
+})
+    // Direct redirect after creation (correct behavior)
+    if (data.role === "owner" || data.role === "admin") {
+      router.push('/admin')
+    } else {
+      router.push('/dashboard')
+    }
 
-    router.push('/dashboard')
   } catch (error) {
-    console.error('Failed to create organisation:', error)
-    
+  console.error('Failed to create organisation:', error)
     if (error.response && error.response.data) {
       const errors = Object.values(error.response.data).flat()
       errorMessage.value = errors[0] || 'Failed to create organisation.'
