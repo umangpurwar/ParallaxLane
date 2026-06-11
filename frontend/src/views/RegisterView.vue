@@ -113,7 +113,8 @@
                         </button>
                         
                         
-                        <button 
+                        <button
+                        v-if="googleAuthEnabled"
                         @click="triggerGoogleLogin"
                         type="button"
                         class="w-full py-4 text-[10px] uppercase tracking-super-wide font-bold transition-all duration-300 border-2 border-brutal-ink text-brutal-ink hover:bg-brutal-ink hover:text-brutal-paper flex items-center justify-center gap-3">
@@ -198,22 +199,21 @@
   </div>
 </template>
 
-```vue
 <script setup>
 import { ref, onMounted, nextTick } from "vue"
 import { useRouter } from "vue-router"
-import api from "../services/api"
+import api, { setSessionData, redirectAfterAuth } from "../services/api"
+import { startGoogleLogin, isGoogleAuthConfigured } from "../utils/googleAuth"
 import CaptchaBox from "../components/CaptchaBox.vue"
 
 const router = useRouter()
+const googleAuthEnabled = isGoogleAuthConfigured()
 
 const name = ref("")
 const email = ref("")
 const password = ref("")
 const confirmPassword = ref("")
 const errorMessage = ref("")
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
-
 // Captcha State
 const captchaVerified = ref(false)
 const captchaRef = ref(null)
@@ -262,11 +262,11 @@ const register = async () => {
   if (!validateForm()) return
 
   try {
-    await api.post("accounts/send-otp/", {
-      email: email.value.trim().toLowerCase(),   // FIX: normalize email
+    const res = await api.post("accounts/send-otp/", {
+      email: email.value.trim().toLowerCase(),
       mode: "register"
     })
-    
+
     showOtpModal.value = true
     startResendTimer()
     otp.value = ['', '', '', '', '', '']         // FIX: reset OTP
@@ -318,16 +318,16 @@ const verifyOtp = async () => {
   otpError.value = ""
 
   try {
-    await api.post("accounts/verify-otp-register/", {
-      email: email.value.trim().toLowerCase(),  // FIX: normalize email
+    const res = await api.post("accounts/verify-otp-register/", {
+      email: email.value.trim().toLowerCase(),
       otp: otpString,
       name: name.value,
       password: password.value
     })
 
     closeOtpModal()
-    alert("Registered successfully. Please log in.")
-    router.push("/login")
+    setSessionData(res.data)
+    redirectAfterAuth(router)
 
   } catch (error) {
     if (error.response && error.response.data) {
@@ -381,20 +381,5 @@ const closeOtpModal = () => {
   otpError.value = ""
 }
 
-// GOOGLE LOGIN (same as login view)
-const triggerGoogleLogin = () => {
-  console.log("REGISTER GOOGLE CLICKED")   // add this
-  window.location.href =
-    "https://accounts.google.com/o/oauth2/v2/auth?" +
-    new URLSearchParams({
-      client_id:GOOGLE_CLIENT_ID,
-      redirect_uri: window.location.origin + "/auth/google",
-      response_type: "id_token",
-      scope: "openid email profile",
-      nonce: "random_nonce_123456"
-    })
-}
+const triggerGoogleLogin = () => startGoogleLogin()
 </script>
-```
-
-```

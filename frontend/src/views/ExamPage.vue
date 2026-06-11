@@ -63,10 +63,10 @@
       <transition name="fade">
         <div v-if="errorMessage || statusMessage" class="absolute top-0 left-0 w-full z-50 p-4 pointer-events-none">
           <div v-if="errorMessage" class="bg-brutal-ink text-white p-4 font-bold tracking-widest uppercase text-center text-sm shadow-xl mt-2 pointer-events-auto">
-            🚨 {{ errorMessage }}
+             {{ errorMessage }}
           </div>
           <div v-if="statusMessage" class="bg-emerald-600 text-white p-4 font-bold tracking-widest uppercase text-center text-sm shadow-xl mt-2 pointer-events-auto">
-            ℹ️ {{ statusMessage }}
+             {{ statusMessage }}
           </div>
         </div>
       </transition>
@@ -121,24 +121,24 @@
 
             <div class="grid grid-cols-1 gap-4 mt-auto mb-12">
               <label 
-                v-for="(label, key) in ['a', 'b', 'c', 'd']" :key="key"
+                v-for="(option, optIndex) in (currentQuestion.options || [])" :key="option.id"
                 class="relative border-2 p-6 flex items-center cursor-pointer transition-all duration-200 group"
-                :class="answers[currentQuestion.id] === label ? 'border-brutal-red bg-brutal-red/5' : 'border-brutal-border hover:border-brutal-ink bg-white'"
+                :class="answers[currentQuestion.id] === option.id ? 'border-brutal-red bg-brutal-red/5' : 'border-brutal-border hover:border-brutal-ink bg-white'"
               >
                 <input 
                   type="radio" 
-                  :name="currentQuestion.id" 
-                  :value="label" 
-                  :checked="answers[currentQuestion.id] === label"
-                  @click.prevent="toggleAnswer(currentQuestion.id, label)"
+                  :name="String(currentQuestion.id)" 
+                  :value="option.id" 
+                  :checked="answers[currentQuestion.id] === option.id"
+                  @click.prevent="toggleAnswer(currentQuestion.id, option.id)"
                   class="sr-only" 
                 />
                 <div class="w-8 h-8 rounded-full border-2 flex items-center justify-center mr-6 font-bold text-sm uppercase transition-colors"
-                     :class="answers[currentQuestion.id] === label ? 'border-brutal-red text-brutal-red' : 'border-brutal-border text-gray-400 group-hover:border-brutal-ink group-hover:text-brutal-ink'">
-                  {{ label }}
+                     :class="answers[currentQuestion.id] === option.id ? 'border-brutal-red text-brutal-red' : 'border-brutal-border text-gray-400 group-hover:border-brutal-ink group-hover:text-brutal-ink'">
+                  {{ String.fromCharCode(65 + optIndex) }}
                 </div>
-                <span class="text-lg font-medium" :class="answers[currentQuestion.id] === label ? 'text-brutal-red' : 'text-brutal-ink'">
-                  {{ currentQuestion['option_' + label] || 'Option ' + label.toUpperCase() }}
+                <span class="text-lg font-medium" :class="answers[currentQuestion.id] === option.id ? 'text-brutal-red' : 'text-brutal-ink'">
+                  {{ option.text }}
                 </span>
               </label>
             </div>
@@ -232,13 +232,22 @@
 </template>
 
 <script setup>
+const clearExamLocalState = () => {
+  const examId = route.params.id
+  localStorage.removeItem("attempt_id")
+  localStorage.removeItem("active_exam_id")
+  if (examId) {
+    localStorage.removeItem(`exam_state_${examId}`)
+  }
+}
+
 const handleExamTermination = (message = "Exam has been terminated by admin") => {
   errorMessage.value = message;
 
   cleanup(); // stop camera, timers, heartbeat
 
   setTimeout(() => {
-    localStorage.removeItem("attempt_id");
+    clearExamLocalState()
     router.push("/dashboard");
   }, 2000);
 };
@@ -538,12 +547,12 @@ const submitExam = async () => {
     }
 
     
-    localStorage.removeItem(`exam_state_${examId}`)
+    clearExamLocalState()
     const res = await api.post(`exams/${examId}/submit/`, {
       answers: answers.value
     })
 
-    statusMessage.value = `Exam Submitted! Score: ${res.data.score}/${res.data.total}`
+    statusMessage.value = `Exam Submitted! Score: ${res.data.points_scored}/${res.data.total_points}`
     setTimeout(() => router.push("/dashboard"), 3000)
 
   } catch (error) {
@@ -582,10 +591,20 @@ canvas.toBlob(async (blob) => {
 }, "image/png", 0.6);
 };
 
+const VIOLATION_TYPE_MAP = {
+  TAB_SWITCH: 'tab_switch',
+  WINDOW_FOCUS_LOST: 'window_blur',
+  ESC_FULLSCREEN: 'window_blur',
+  CAMERA_OFF: 'no_face',
+  DEVTOOLS: 'suspicious_movement',
+  COPY_PASTE: 'copy_paste',
+}
+
 // violation
 const logViolation = async (type) => {
   if (!isSecureMode.value) return;
 
+  const apiType = VIOLATION_TYPE_MAP[type] || type.toLowerCase()
   const now = Date.now();
   const cooldownKey =
     (type === 'TAB_SWITCH' || type === 'WINDOW_FOCUS_LOST')
@@ -608,7 +627,7 @@ const logViolation = async (type) => {
     try {
       res = await api.post("monitoring/log/", {
         attempt_id: attemptId.value,
-        type,
+        type: apiType,
         severity: 1
       });
     } catch (error) {
@@ -723,13 +742,13 @@ onUnmounted(() => {
   cleanup()
 })
 
-const toggleAnswer = (questionId, label) => {
-  if (answers.value[questionId] === label) {
-    delete answers.value[questionId]; // unselect
+const toggleAnswer = (questionId, optionId) => {
+  if (answers.value[questionId] === optionId) {
+    delete answers.value[questionId];
   } else {
-    answers.value[questionId] = label; // select
+    answers.value[questionId] = optionId;
   }
 
-  saveExamState(); 
+  saveExamState();
 };
 </script>

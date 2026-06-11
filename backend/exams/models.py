@@ -116,8 +116,17 @@ class ExamAttempt(models.Model):
     risk_score = models.IntegerField(default=0)
     total_violations = models.IntegerField(default=0)
 
-    status = models.CharField(max_length=20, default="active")
+    status = models.CharField(max_length=20, default="active", db_index=True)
     last_active = models.DateTimeField(default=now)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "exam"],
+                condition=models.Q(status="active"),
+                name="unique_active_attempt_per_user_exam",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.user} - {self.exam}"

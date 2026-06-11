@@ -40,6 +40,16 @@
         </div>
         
         <div class="flex items-center gap-6">
+          <div v-if="currentOrgName" class="flex items-center gap-3 border-r border-brutal-border pr-6">
+            <span class="text-[9px] uppercase tracking-widest font-bold text-brutal-red">{{ currentOrgName }}</span>
+            <PlanBadge :plan="currentOrgPlan" />
+          </div>
+          <router-link
+            to="/org-settings"
+            class="text-[9px] uppercase tracking-widest font-bold text-gray-500 hover:text-brutal-ink border-r border-brutal-border pr-6"
+          >
+            Settings
+          </router-link>
           <div class="flex items-center gap-3">
             <label class="text-[9px] uppercase tracking-widest font-bold text-gray-500">Monitoring:</label>
             <select 
@@ -52,10 +62,6 @@
                 {{ exam.title }} (ID: {{ exam.id }})
               </option>
             </select>
-          </div>
-
-          <div class="px-6 h-10 bg-brutal-ink text-brutal-paper flex items-center justify-center font-bold text-[10px] uppercase tracking-widest">
-            {{ adminName }}
           </div>
         </div>
       </header>
@@ -139,7 +145,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import api from '@/services/api';
+import api, { logout as apiLogout } from '@/services/api';
 
 // component Imports
 import DashboardOverview from '../components/DashboardOverview.vue';
@@ -148,6 +154,7 @@ import ExamControl from '../components/ExamControl.vue';
 import ReportsTab from '../components/ReportsTab.vue';
 import UserDirectory from '../components/UserDirectory.vue';
 import LiveMonitor from '../components/LiveMonitor.vue';
+import PlanBadge from '../components/PlanBadge.vue';
 
 const router = useRouter();
 
@@ -160,6 +167,8 @@ const activeTab = ref('dashboard');
 const showModal = ref(false);
 const selectedUser = ref(null);
 const adminName = ref('Admin');
+const currentOrgName = ref(localStorage.getItem('org_name') || '');
+const currentOrgPlan = ref(localStorage.getItem('org_plan') || 'free');
 
 // DRF Backend State
 const exams = ref([]);
@@ -176,7 +185,6 @@ const activeExamsList = computed(() => {
 const setMonitoringExam = () => {
   if (currentMonitorExam.value) {
     localStorage.setItem("active_exam_id", currentMonitorExam.value);
-    console.log("Admin is now monitoring Exam ID:", currentMonitorExam.value);
     
     fetchDashboardStats(); 
     
@@ -261,6 +269,7 @@ onMounted(() => {
 
   const storedName = localStorage.getItem("username");
   if (storedName) adminName.value = storedName;
+  currentOrgPlan.value = localStorage.getItem('org_plan') || 'free';
   fetchExams();
   fetchDashboardStats();
   
@@ -321,8 +330,8 @@ const clearUserViolations = async (username) => {
   }
 };
 
-const logout = () => {
-  localStorage.clear();
+const logout = async () => {
+  await apiLogout();
   router.push("/login"); 
 };
 </script>

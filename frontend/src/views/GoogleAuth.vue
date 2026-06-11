@@ -7,7 +7,7 @@
 <script setup>
 import { onMounted } from "vue"
 import { useRouter } from "vue-router"
-import api from "../services/api"
+import api, { setSessionData, redirectAfterAuth } from "../services/api"
 
 const router = useRouter()
 
@@ -29,25 +29,18 @@ onMounted(async () => {
     // Send token to backend for verification and login
     const res = await api.post("accounts/google/", { token })
 
-    // Store authentication and organisation details
-    localStorage.setItem("access_token", res.data.access)
-    localStorage.setItem("org_role", res.data.org_role || "")
-    localStorage.setItem("org_slug", res.data.org_slug || "")
-
-    // Store user identity for UI usage (greeting, profile, etc.)
-    localStorage.setItem(
-      "username",
-      res.data.username || res.data.name || res.data.email || "User"
-    )
-    localStorage.setItem("email", res.data.email || "")
-
-    console.log("GOOGLE RESPONSE:", res.data)
-    // Redirect to org home 
-    router.push("/org-home")
+    setSessionData({
+      ...res.data,
+      display_name: res.data.display_name || res.data.username || res.data.name,
+    })
+    redirectAfterAuth(router)
 
   } catch (error) {
-    // If anything fails, log error and send user back to login
     console.error("Google authentication failed:", error)
+    const msg = error.response?.data?.error
+    if (msg) {
+      sessionStorage.setItem("auth_error", msg)
+    }
     router.push("/login")
   }
 })

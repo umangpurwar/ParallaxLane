@@ -8,7 +8,6 @@
 
     <div class="relative z-10 max-w-md w-full bg-brutal-paper text-brutal-ink border-4 border-brutal-ink p-10 flex flex-col shadow-[12px_12px_0px_0px_rgba(239,63,35,1)]">
       
-      <!-- BACK BUTTON -->
       <button
         @click="goBack"
         class="absolute top-3 left-3 text-[9px] uppercase tracking-widest font-bold text-gray-500 hover:text-brutal-red"
@@ -16,7 +15,6 @@
         ← Back
       </button>
 
-      <!-- GREETING -->
       <h1 class="text-3xl font-black tracking-tighter text-brutal-ink mb-2 uppercase italic text-center">
         Hello {{ username }}
       </h1>
@@ -68,7 +66,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import api, { setAuthData } from '@/services/api'
+import api from '@/services/api'
 
 const router = useRouter()
 
@@ -99,43 +97,16 @@ const createOrg = async () => {
   isSubmitting.value = true
 
   try {
-    const response = await api.post('organisations/create/', {
+    await api.post('organisations/create/', {
       name: name.value.trim()
     })
 
-    const data = response.data
-
-    // 1. Safely extract values using the fallback pattern
-    const slug = data.slug || data.org
-    const orgName = data.name
-    const plan = data.plan
-
-    // 2. Strict validation to prevent writing undefined values
-    if (!slug) {
-      throw new Error('Organisation identifier missing from response.')
-    }
-
-    // 3. Save only valid values to localStorage
-   setAuthData({
-  org_slug: slug,
-  org_role: data.role || 'owner',
-  org_name: orgName || name.value.trim(),
-  org_plan: plan || 'free'
-})
-    // Direct redirect after creation (correct behavior)
-    if (data.role === "owner" || data.role === "admin") {
-      router.push('/admin')
-    } else {
-      router.push('/dashboard')
-    }
-
+    router.push('/org-home')
   } catch (error) {
-  console.error('Failed to create organisation:', error)
+    console.error('Failed to create organisation:', error)
     if (error.response && error.response.data) {
       const errors = Object.values(error.response.data).flat()
       errorMessage.value = errors[0] || 'Failed to create organisation.'
-    } else if (error.message === 'Organisation identifier missing from response.') {
-      errorMessage.value = 'Invalid server response. Please try again.'
     } else {
       errorMessage.value = 'A network error occurred. Please try again.'
     }

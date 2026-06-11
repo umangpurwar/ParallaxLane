@@ -1,120 +1,165 @@
 <template>
-  <div class="flex items-center justify-center h-screen bg-brutal-dark font-sans p-6 overflow-hidden relative">
-    
-    <div class="absolute inset-0 pointer-events-none z-0">
-      <div class="grid-line-v left-[33%]"></div>
-      <div class="grid-line-v left-[66%]"></div>
-    </div>
 
-    <div class="relative z-10 max-w-md w-full bg-brutal-paper text-brutal-ink border-4 border-brutal-ink p-10 flex flex-col shadow-[12px_12px_0px_0px_rgba(239,63,35,1)]">
+  <div class="flex items-center justify-center h-screen bg-[#0a0a0a] text-white">
+
+    
+
+    <div class="relative p-10 border-4 border-black bg-white text-black shadow-[8px_8px_0px_#ef3f23] text-center w-full max-w-sm">
+
       
-      <h1 class="text-4xl font-black tracking-tighter text-brutal-ink mb-2 uppercase italic">
+
+      <button
+
+        @click="goBack"
+
+        class="absolute top-3 left-3 text-[10px] uppercase tracking-widest font-bold text-gray-600 hover:text-[#ef3f23]"
+
+      >
+
+        ← Back
+
+      </button>
+
+
+
+      <h1 class="text-xl font-bold mb-6 uppercase tracking-widest">
+
         Join Organisation
+
       </h1>
-      <p class="text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-8 border-b-2 border-brutal-ink pb-4">
-        Enter your secure invite code below
+
+
+
+      <input
+
+        v-model="inviteCode"
+
+        type="text"
+
+        placeholder="Enter Invite Code"
+
+        class="border-2 border-black px-4 py-3 mb-4 w-full"
+
+        :disabled="isLoading"
+
+      />
+
+
+
+      <p v-if="errorMessage" class="text-red-600 text-xs mb-3">
+
+        {{ errorMessage }}
+
       </p>
 
-      <form @submit.prevent="joinOrg" class="flex flex-col gap-6">
-        <div class="relative">
-          <input
-            v-model="inviteCode"
-            type="text"
-            placeholder="INVITE CODE"
-            class="w-full bg-white border-2 border-brutal-border py-4 px-4 text-center text-brutal-ink font-bold tracking-[0.3em] uppercase placeholder-gray-400 focus:outline-none focus:border-brutal-ink transition-colors"
-            :disabled="isSubmitting"
-          />
-        </div>
 
-        <p v-if="errorMessage" class="text-[10px] uppercase tracking-widest font-bold text-brutal-red text-center leading-tight">
-          {{ errorMessage }}
-        </p>
 
-        <button
-          type="submit"
-          :disabled="isSubmitting || !inviteCode.trim()"
-          class="w-full py-5 text-[11px] uppercase tracking-[0.4em] font-black transition-all transform active:scale-95 border-b-4 border-r-4 border-gray-600"
-          :class="(isSubmitting || !inviteCode.trim()) ? 'bg-gray-300 text-gray-500 cursor-not-allowed border-transparent' : 'bg-brutal-ink text-white hover:bg-brutal-red hover:border-brutal-ink cursor-pointer'"
-        >
-          {{ isSubmitting ? 'Joining...' : 'Join Organisation' }}
-        </button>
-      </form>
+      <button
 
-      <div class="mt-8 text-center">
-        <router-link to="/create-org" class="text-[9px] uppercase tracking-widest font-bold text-gray-500 hover:text-brutal-red transition-colors">
-          Have no invite? Create your own organisation
-        </router-link>
-      </div>
+        @click="joinOrg"
+
+        :disabled="isLoading"
+
+        class="w-full bg-black text-white py-3 uppercase tracking-widest font-bold hover:bg-[#ef3f23] disabled:opacity-50"
+
+      >
+
+        {{ isLoading ? "Joining..." : "Join" }}
+
+      </button>
+
+
 
     </div>
+
   </div>
+
 </template>
 
+
+
 <script setup>
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import api, { setAuthData } from '@/services/api'
+
+import { ref } from "vue"
+
+import { useRouter } from "vue-router"
+
+import api from "@/services/api"
+
+
 
 const router = useRouter()
 
-const inviteCode = ref('')
-const isSubmitting = ref(false)
-const errorMessage = ref('')
 
-onMounted(() => {
-  const orgSlug = localStorage.getItem("org_slug")
-  if (orgSlug) {
-    router.push('/dashboard')
-  }
-})
+
+const inviteCode = ref("")
+
+const errorMessage = ref("")
+
+const isLoading = ref(false)
+
+
+
+const goBack = () => {
+
+  router.push("/org-home")
+
+}
+
+
 
 const joinOrg = async () => {
-  errorMessage.value = ''
 
-  if (!inviteCode.value.trim()) {
-    errorMessage.value = 'Please enter an invite code.'
+  errorMessage.value = ""
+
+
+
+  const code = inviteCode.value.trim()
+
+
+
+  if (!code) {
+
+    errorMessage.value = "Invite code required"
+
     return
+
   }
 
-  isSubmitting.value = true
+
+
+  isLoading.value = true
+
+
 
   try {
-    const response = await api.post('organisations/join/', {
-      code: inviteCode.value.trim()
-    })
 
-    const data = response.data
+    await api.post("organisations/join/", { code })
 
-    // ✅ Defensive extraction
-    const slug = data.org_slug || data.slug || null
-    const name = data.org_name || data.name || null
-    const plan = data.org_plan || data.plan || null
-    const role = data.org_role || 'candidate'
-    // ❌ HARD STOP if slug missing
-    if (!slug) {
-      throw new Error('Organisation data missing from response')
-    }
-    // ✅ Safe storage
-    setAuthData({
-      org_slug: slug,
-      org_role: role,
-      org_name: name || 'Organisation',
-      org_plan: plan || 'free'
-    })
+    router.push("/org-home")
 
-    router.push('/dashboard')
-  } catch (error) {
-    console.error('Failed to join organisation:', error)
-    if (error.message === 'Organisation data missing from response') {
-      errorMessage.value = 'Invalid invite response. Please try again.'
-    } else if (error.response && error.response.data) {
-      const errors = Object.values(error.response.data).flat()
-      errorMessage.value = errors[0] || 'Invalid or expired invite code.'
+  } catch (err) {
+
+    if (err.response && err.response.data) {
+
+      errorMessage.value =
+
+        err.response.data.error || "Invalid or expired invite code"
+
     } else {
-      errorMessage.value = 'A network error occurred. Please try again.'
+
+      errorMessage.value = "Network error. Please try again."
+
     }
+
   } finally {
-    isSubmitting.value = false
+
+    isLoading.value = false
+
   }
+
 }
+
 </script>
+
+

@@ -1,6 +1,8 @@
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
+from django.http import HttpResponse
 from collections import defaultdict
+from django.db.models import Prefetch
 from exams.models import Exam, ExamAttempt, Question
 from monitoring.models import Screenshot, Violation
 from django_ratelimit.decorators import ratelimit
@@ -8,10 +10,9 @@ from django.shortcuts import get_object_or_404
 from core.permissions import IsOrgAdmin, IsOrgInvigilator
 from datetime import timedelta
 from django.utils.timezone import now
-from django.utils.dateparse import parse_datetime
 from exams.serializers import ExamSerializer, ExamDetailSerializer
 from django.contrib.auth import get_user_model
-from exams.models import QuestionOption
+from .report_export import generate_assessment_report
 
 
 User = get_user_model()
@@ -33,6 +34,16 @@ def live_monitor(request, exam_id):
         ExamAttempt.objects
         .filter(exam=exam)
         .select_related("user")
+        .prefetch_related(
+            Prefetch(
+                "violations",
+                queryset=Violation.objects.order_by("-timestamp"),
+            ),
+            Prefetch(
+                "screenshot_set",
+                queryset=Screenshot.objects.order_by("-timestamp"),
+            ),
+        )
         .order_by("user_id", "-start_time", "-id")
     )
 
@@ -51,21 +62,12 @@ def live_monitor(request, exam_id):
         if attempt.status == 'terminated':
             display_status = 'terminated'
 
-        latest_violation = (
-            Violation.objects
-            .filter(attempt=attempt)
-            .order_by("-timestamp")
-            .first()
-        )
-
+        violations = list(attempt.violations.all())
+        latest_violation = violations[0] if violations else None
         metadata = latest_violation.metadata if latest_violation and latest_violation.metadata else {}
 
-        latest_screenshot = (
-            Screenshot.objects
-            .filter(attempt=attempt)
-            .order_by("-timestamp")
-            .first()
-        )
+        screenshots = list(attempt.screenshot_set.all())
+        latest_screenshot = screenshots[0] if screenshots else None
 
         system_health = {
             "camera": metadata.get("camera", True),
@@ -73,11 +75,16 @@ def live_monitor(request, exam_id):
             "fullscreen": metadata.get("fullscreen", True)
         }
 
+        user = attempt.user
+        full_name = f"{user.first_name} {user.last_name}".strip()
+        display_name = full_name or user.name or user.username
+
         data.append({
-            "username": attempt.user.username,
+            "username": user.username,
+            "display_name": display_name,
             "attempt_id": attempt.id,
             "violations_count": attempt.total_violations,
-            "risk_score": attempt.risk_score,
+            "risk_score": attempt.risk_score or 0,
             "status": display_status,
             "system_health": system_health,
 
@@ -152,7 +159,6 @@ def _user_detail_response(request, username, exam_id=None):
     return Response({
         "breakdown": breakdown,
         "screenshots": screenshot_items,
-        "images": [s.image for s in screenshots]
     })
 
 
@@ -165,25 +171,33 @@ def clear_violations(request, username):
 
     org = request.user.current_organisation
 
-    Violation.objects.filter(
-        attempt__user__username=username,
-        attempt__exam__organisation=org
-    ).delete()
+    attempts = ExamAttempt.objects.filter(
+        user__username=username,
+        exam__organisation=org
+    )
+
+    Violation.objects.filter(attempt__in=attempts).delete()
+    attempts.update(total_violations=0, risk_score=0)
 
     return Response({"status": "cleared"})
 
 
+@ratelimit(key='user', rate='5/m', method='POST', block=True)
+@ratelimit(key='user', rate='5/m', method='DELETE', block=True)
 @api_view(['DELETE', 'POST'])
 @permission_classes([IsOrgAdmin])
 def clear_violations_exam(request, exam_id, username):
 
     org = request.user.current_organisation
 
-    Violation.objects.filter(
-        attempt__user__username=username,
-        attempt__exam_id=exam_id,
-        attempt__exam__organisation=org
-    ).delete()
+    attempts = ExamAttempt.objects.filter(
+        user__username=username,
+        exam_id=exam_id,
+        exam__organisation=org
+    )
+
+    Violation.objects.filter(attempt__in=attempts).delete()
+    attempts.update(total_violations=0, risk_score=0)
 
     return Response({"status": "cleared"})
 
@@ -247,52 +261,12 @@ def update_exam(request, exam_id):
 
     exam = get_object_or_404(Exam, id=exam_id, organisation=org)
 
-    exam.title = request.data.get("title", exam.title)
-    exam.description = request.data.get("description", exam.description)
-    exam.duration = request.data.get("duration", exam.duration)
+    serializer = ExamSerializer(exam, data=request.data, partial=True, context={"request": request})
+    if serializer.is_valid():
+        serializer.save()
+        return Response({"status": "updated"})
 
-    start_time_input = request.data.get("start_time")
-    end_time_input = request.data.get("end_time")
-
-    if start_time_input:
-        start_time = parse_datetime(start_time_input)
-        if not start_time:
-            return Response({"error": "Invalid start_time"}, status=400)
-        exam.start_time = start_time
-
-    if end_time_input:
-        end_time = parse_datetime(end_time_input)
-        if not end_time:
-            return Response({"error": "Invalid end_time"}, status=400)
-        exam.end_time = end_time
-
-    exam.save()
-
-    exam.questions.all().delete()
-
-    for q in request.data.get("questions", []):
-        options_data = q.get("options") or []
-
-        question = Question.objects.create(
-            exam=exam,
-            text=q.get("text"),
-            question_type=q.get("question_type", "mcq"),
-            points=q.get("points", 1),
-            negative_points=q.get("negative_points", 0),
-            order=q.get("order", 0),
-            image=q.get("image"),
-            correct_text_answer=q.get("correct_text_answer"),
-            explanation=q.get("explanation"),
-        )
-
-        for opt in options_data:
-            QuestionOption.objects.create(
-                question=question,
-                text=opt.get("text"),
-                is_correct=opt.get("is_correct", False)
-            )
-
-    return Response({"status": "updated"})
+    return Response(serializer.errors, status=400)
 
 # ---------------- CREATE / DELETE ----------------
 
@@ -362,6 +336,24 @@ def exam_qa(request, exam_id):
     })
 
     return Response(data)
+
+
+@ratelimit(key='user', rate='10/m', method='GET', block=True)
+@api_view(['GET'])
+@permission_classes([IsOrgAdmin])
+def exam_export_report(request, exam_id):
+
+    org = request.user.current_organisation
+    exam = get_object_or_404(Exam, id=exam_id, organisation=org)
+
+    workbook = generate_assessment_report(exam)
+
+    response = HttpResponse(
+        workbook.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = 'attachment; filename="ParallaxLane_Assessment_Report.xlsx"'
+    return response
 
 
 @api_view(['GET'])

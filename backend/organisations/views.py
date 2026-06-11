@@ -2,11 +2,19 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
+from django.db import transaction
+from django.db.models import F
+from django.utils.decorators import method_decorator
+from django_ratelimit.decorators import ratelimit
 
-from .models import Organisation, OrganisationMember
+from .models import Organisation, OrganisationMember, OrganisationInvite, Coupon
+from .utils import sync_user_organisation_context
+from .roles import normalize_invite_role, sanitize_stored_role
+from .plan_usage import get_organisation_usage
+from core.permissions import get_membership
+from core.validators import normalize_email, validate_org_name
 from django.contrib.auth import get_user_model
 import uuid
-from .models import OrganisationInvite
 from django.utils.text import slugify
 from django.utils.timezone import now
 from datetime import timedelta
@@ -18,10 +26,10 @@ class CreateOrganisationView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        name = request.data.get("name")
-
-        if not name:
-            return Response({"error": "Organisation name is required"}, status=400)
+        try:
+            name = validate_org_name(request.data.get("name"))
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=400)
 
         base_slug = slugify(name)
         slug = base_slug
@@ -51,7 +59,15 @@ class MyOrganisationsView(APIView):
             .select_related("organisation")
         )
 
-        data = [{"name": m.organisation.name, "slug": m.organisation.slug, "role": m.role} for m in memberships]
+        data = [
+            {
+                "name": m.organisation.name,
+                "slug": m.organisation.slug,
+                "role": m.role,
+                "plan": m.organisation.plan,
+            }
+            for m in memberships
+        ]
 
         return Response({"count": len(data), "organisations": data})
 
@@ -61,7 +77,9 @@ class SwitchOrganisationView(APIView):
 
     def post(self, request, slug):
         membership = OrganisationMember.objects.filter(
-            user=request.user, organisation__slug=slug
+            user=request.user,
+            organisation__slug=slug,
+            is_active=True,
         ).first()
 
         if not membership:
@@ -75,7 +93,11 @@ class SwitchOrganisationView(APIView):
             "slug": membership.organisation.slug,
             "name": membership.organisation.name,
             "plan": membership.organisation.plan,
-            "role": membership.role
+            "org_plan": membership.organisation.plan,
+            "org_slug": membership.organisation.slug,
+            "org_name": membership.organisation.name,
+            "role": membership.role,
+            "org_role": membership.role,
         })
 
 
@@ -88,12 +110,19 @@ class InviteMemberView(APIView):
         if not org.members.filter(user=request.user, role__in=["owner", "admin"]).exists():
             return Response({"error": "Forbidden"}, status=403)
 
-        email = request.data.get("email")
-        role = request.data.get("role", "candidate")
+        try:
+            email = normalize_email(request.data.get("email"))
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=400)
+
+        role = normalize_invite_role(request.data.get("role", "candidate"))
         expiry_days = request.data.get("expiry_days")
 
-        if not email:
-            return Response({"error": "email required"}, status=400)
+        if role is None:
+            return Response(
+                {"error": "Invalid role. Allowed: admin, invigilator, candidate"},
+                status=400,
+            )
 
         expires_at = None
         if expiry_days:
@@ -118,6 +147,9 @@ class InviteMemberView(APIView):
             )
             invite.accepted = True
             invite.save()
+            if not user.current_organisation_id:
+                user.current_organisation = org
+                user.save(update_fields=["current_organisation"])
             return Response({
                 "status": "user added directly",
                 "org_slug": org.slug,
@@ -143,35 +175,154 @@ class OrganisationMembersView(APIView):
         return Response(data)
 
 
+def _accept_invite_for_user(user, token):
+    invite = get_object_or_404(OrganisationInvite, token=token)
+
+    if invite.accepted:
+        return None, Response({"error": "Already accepted"}, status=400)
+
+    if invite.is_revoked:
+        return None, Response({"error": "Invite revoked"}, status=400)
+
+    if invite.expires_at and now() > invite.expires_at:
+        return None, Response({"error": "Invite expired"}, status=400)
+
+    if user.email.lower().strip() != invite.email.lower().strip():
+        return None, Response(
+            {"error": "This invite was issued for a different email address"},
+            status=403,
+        )
+
+    safe_role = sanitize_stored_role(invite.role)
+
+    member, _ = OrganisationMember.objects.get_or_create(
+        organisation=invite.organisation, user=user, defaults={"role": safe_role}
+    )
+
+    invite.accepted = True
+    invite.save()
+
+    user.current_organisation = invite.organisation
+    user.save()
+
+    return {
+        "status": "joined",
+        "slug": invite.organisation.slug,
+        "name": invite.organisation.name,
+        "plan": invite.organisation.plan,
+        "role": member.role,
+        "org_slug": invite.organisation.slug,
+        "org_name": invite.organisation.name,
+        "org_plan": invite.organisation.plan,
+        "org_role": member.role,
+    }, None
+
+
+class JoinOrganisationView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        code = request.data.get("code")
+        if not code:
+            return Response({"error": "Invite code required"}, status=400)
+
+        result, error_response = _accept_invite_for_user(request.user, code.strip())
+        if error_response:
+            return error_response
+        return Response(result)
+
+
 class AcceptInviteView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, token):
-        invite = get_object_or_404(OrganisationInvite, token=token)
+        result, error_response = _accept_invite_for_user(request.user, token)
+        if error_response:
+            return error_response
+        return Response(result)
 
-        if invite.accepted:
-            return Response({"error": "Already accepted"}, status=400)
 
-        if invite.is_revoked:
-            return Response({"error": "Invite revoked"}, status=400)
+def _require_org_admin(request):
+    membership = get_membership(request.user)
+    if not membership:
+        return None, Response({"error": "No active organisation selected"}, status=403)
+    if membership.role not in [OrganisationMember.ROLE_OWNER, OrganisationMember.ROLE_ADMIN]:
+        return None, Response({"error": "Only organisation owners and admins can manage plans"}, status=403)
+    return membership, None
 
-        if invite.expires_at and now() > invite.expires_at:
-            return Response({"error": "Invite expired"}, status=400)
 
-        member, _ = OrganisationMember.objects.get_or_create(
-            organisation=invite.organisation, user=request.user, defaults={"role": invite.role}
-        )
+class OrganisationSettingsView(APIView):
+    permission_classes = [IsAuthenticated]
 
-        invite.accepted = True
-        invite.save()
+    def get(self, request):
+        membership = get_membership(request.user)
+        if not membership:
+            return Response({"error": "No active organisation selected"}, status=403)
 
-        request.user.current_organisation = invite.organisation
-        request.user.save()
+        org = membership.organisation
+        usage = get_organisation_usage(org)
 
         return Response({
-            "status": "joined",
-            "org_slug": invite.organisation.slug,
-            "org_name": invite.organisation.name,
-            "org_plan": invite.organisation.plan,
-            "org_role": member.role
+            "organisation": {
+                "name": org.name,
+                "slug": org.slug,
+                "plan": org.plan,
+                "plan_label": org.plan.upper(),
+            },
+            "role": membership.role,
+            "can_redeem_coupons": membership.role in [
+                OrganisationMember.ROLE_OWNER,
+                OrganisationMember.ROLE_ADMIN,
+            ],
+            **usage,
+        })
+
+
+class RedeemCouponView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @method_decorator(ratelimit(key='user', rate='5/m', method='POST', block=True))
+    def post(self, request):
+        membership, error = _require_org_admin(request)
+        if error:
+            return error
+
+        code = (request.data.get("code") or "").strip().upper()
+        if not code:
+            return Response({"error": "Coupon code is required"}, status=400)
+
+        with transaction.atomic():
+            try:
+                coupon = Coupon.objects.select_for_update().get(code=code)
+            except Coupon.DoesNotExist:
+                return Response({"error": "Invalid coupon code"}, status=400)
+
+            if not coupon.active:
+                return Response({"error": "This coupon is no longer active"}, status=400)
+
+            if coupon.is_expired:
+                return Response({"error": "This coupon has expired"}, status=400)
+
+            if coupon.is_exhausted:
+                return Response({"error": "This coupon has reached its usage limit"}, status=400)
+
+            org = membership.organisation
+            org.plan = coupon.plan
+            org.save(update_fields=["plan"])
+
+            Coupon.objects.filter(pk=coupon.pk).update(used_count=F("used_count") + 1)
+            coupon.refresh_from_db()
+
+        usage = get_organisation_usage(org)
+
+        return Response({
+            "status": "redeemed",
+            "message": f"Plan upgraded to {org.plan.upper()}",
+            "plan": org.plan,
+            "plan_label": org.plan.upper(),
+            "org_plan": org.plan,
+            "org_name": org.name,
+            "org_slug": org.slug,
+            "coupon_code": coupon.code,
+            **usage,
         })

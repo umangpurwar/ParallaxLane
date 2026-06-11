@@ -37,9 +37,14 @@ class User(AbstractUser):
 
     
 class EmailOTP(models.Model):
-    email = models.EmailField()
+    email = models.EmailField(db_index=True)
     otp = models.CharField(max_length=6)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["email", "created_at"], name="emailotp_email_created_idx"),
+        ]
 
     def __str__(self):
         return f"{self.email} - {self.otp}"

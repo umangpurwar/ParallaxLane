@@ -84,7 +84,8 @@
         <div class="w-full md:w-[40%] lg:w-[25%] h-full flex flex-col justify-center px-8 sm:px-12 pointer-events-auto">
             <div class="flex flex-col gap-5 w-full max-w-xs mx-auto">
                 
-                <button 
+                <button
+                 v-if="googleAuthEnabled"
                  @click="triggerGoogleLogin" 
                 type="button" 
                 class="flex items-center justify-center gap-3 w-full py-4 px-4 text-[10px] uppercase tracking-super-wide font-bold border-2 border-brutal-ink bg-transparent hover:bg-brutal-ink hover:text-brutal-paper transition-all duration-300 text-brutal-ink"
@@ -289,11 +290,12 @@
 <script setup>
 import { ref, computed, onMounted, nextTick } from "vue"
 import { useRouter } from "vue-router"
-import api from "../services/api"
+import api, { setSessionData, redirectAfterAuth } from "../services/api"
+import { startGoogleLogin, isGoogleAuthConfigured } from "../utils/googleAuth"
 import CaptchaBox from "../components/CaptchaBox.vue"
 
 const router = useRouter()
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
+const googleAuthEnabled = isGoogleAuthConfigured()
 
 // Form State
 const email = ref("")
@@ -337,6 +339,11 @@ let forgotResendInterval = null
 
 onMounted(() => {
   captchaRef.value?.generateCaptcha?.()
+  const authError = sessionStorage.getItem("auth_error")
+  if (authError) {
+    errorMessage.value = authError
+    sessionStorage.removeItem("auth_error")
+  }
 })
 
 // ----------------------
@@ -413,17 +420,8 @@ const validateForm = () => {
 // ----------------------
 
 const handleAuthSuccess = (data) => {
-  localStorage.setItem("access_token", data.access)
-  localStorage.setItem("org_role", data.org_role || "")
-  localStorage.setItem("org_slug", data.org_slug || "")
-
-  localStorage.setItem(
-    "username",
-    data.display_name || data.email || "User"
-  )
-  localStorage.setItem("email", data.email || "")
-
-  router.push("/org-home")
+  setSessionData(data)
+  redirectAfterAuth(router)
 }
 
 const login = async () => {
@@ -451,8 +449,8 @@ const sendOtp = async () => {
   otpError.value = ""
 
   try {
-    await api.post("accounts/send-otp/", { email: email.value, mode:"login" })
-    
+    await api.post("accounts/send-otp/", { email: email.value, mode: "login" })
+
     showOtpModal.value = true
     otp.value = ['', '', '', '', '', '']
 
@@ -677,17 +675,7 @@ const closeForgotModal = () => {
 // GOOGLE LOGIN
 // ----------------------
 
-const triggerGoogleLogin = () => {
-  window.location.href =
-    "https://accounts.google.com/o/oauth2/v2/auth?" +
-    new URLSearchParams({
-      client_id: GOOGLE_CLIENT_ID,
-      redirect_uri: window.location.origin + "/auth/google",
-      response_type: "id_token",
-      scope: "openid email profile",
-      nonce: "random_nonce_123456"
-    })
-}
+const triggerGoogleLogin = () => startGoogleLogin()
 </script>
 
 <style scoped>

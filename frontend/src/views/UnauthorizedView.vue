@@ -38,7 +38,6 @@ const goToLogin = () => {
 };
 
 onMounted(() => {
-  localStorage.clear(); // Ensure total logout
   timer = setInterval(() => {
     countdown.value--;
     if (countdown.value <= 0) {

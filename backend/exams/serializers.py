@@ -10,6 +10,23 @@ class QuestionOptionSerializer(serializers.ModelSerializer):
         fields = ["id", "text", "is_correct"]
 
 
+class CandidateQuestionOptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = QuestionOption
+        fields = ["id", "text"]
+
+
+class CandidateQuestionSerializer(serializers.ModelSerializer):
+    options = CandidateQuestionOptionSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Question
+        fields = ["id", "text", "question_type", "points", "order", "image", "options"]
+
+
+VALID_QUESTION_TYPES = {c[0] for c in Question.QUESTION_TYPE_CHOICES}
+
+
 class QuestionSerializer(serializers.ModelSerializer):
     options = QuestionOptionSerializer(many=True, required=False)
 
@@ -19,6 +36,21 @@ class QuestionSerializer(serializers.ModelSerializer):
             "id", "text", "question_type", "points", "negative_points",
             "order", "image", "options", "correct_text_answer", "explanation",
         ]
+
+    def validate_question_type(self, value):
+        if value not in VALID_QUESTION_TYPES:
+            raise serializers.ValidationError(f"Invalid question type: {value}")
+        return value
+
+    def validate_points(self, value):
+        if value < 0:
+            raise serializers.ValidationError("points must be >= 0")
+        return value
+
+    def validate_negative_points(self, value):
+        if value < 0:
+            raise serializers.ValidationError("negative_points must be >= 0")
+        return value
 
     def create(self, validated_data):
         options_data = validated_data.pop("options", [])
@@ -51,6 +83,11 @@ class ExamSerializer(serializers.ModelSerializer):
         ]
         # FIX: these are set by the view via save(), not by client
         read_only_fields = ["created_by", "organisation", "created_at", "id"]
+
+    def validate_duration(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("duration must be greater than 0")
+        return value
 
     @transaction.atomic
     def create(self, validated_data):
@@ -135,7 +172,7 @@ class ExamAttemptSerializer(serializers.ModelSerializer):
 
 
 class ExamDetailSerializer(serializers.ModelSerializer):
-    questions = QuestionSerializer(many=True, read_only=True)
+    questions = CandidateQuestionSerializer(many=True, read_only=True)
 
     class Meta:
         model = Exam

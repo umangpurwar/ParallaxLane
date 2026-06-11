@@ -3,14 +3,17 @@ import os
 from decouple import config, Csv
 from datetime import timedelta
 from dotenv import load_dotenv
+from django.core.exceptions import ImproperlyConfigured
 
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = config('SECRET_KEY', default='django-insecure-dev-key-change-in-production')
+_INSECURE_SECRET_DEFAULT = 'django-insecure-dev-key-change-in-production'
+
+SECRET_KEY = config('SECRET_KEY', default=_INSECURE_SECRET_DEFAULT)
 DEBUG = config('DEBUG', default=False, cast=bool)
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='*', cast=Csv())
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
 
 INSTALLED_APPS = [
     'admin_panel',
@@ -27,6 +30,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
 ]
 
@@ -107,25 +111,80 @@ SIMPLE_JWT = {
     "BLACKLIST_AFTER_ROTATION": True,
 }
 
-REDIS_URL = config("REDIS_URL", default=None)
+import logging
 
-if REDIS_URL:
-    CACHES = {
+_settings_logger = logging.getLogger(__name__)
+
+REDIS_URL = config("REDIS_URL", default=None)
+# When False, always use LocMemCache (recommended for local dev without Docker Redis).
+USE_REDIS_CACHE = config("USE_REDIS_CACHE", default=False, cast=bool)
+# When True and Redis is unreachable at startup, raise instead of falling back.
+REDIS_REQUIRED = config("REDIS_REQUIRED", default=not DEBUG, cast=bool)
+
+_LOC_MEM_CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+    }
+}
+
+
+def _redis_is_reachable(url: str) -> bool:
+    try:
+        import redis
+
+        client = redis.from_url(
+            url,
+            socket_connect_timeout=2,
+            socket_timeout=2,
+        )
+        client.ping()
+        return True
+    except Exception as exc:
+        _settings_logger.warning("Redis unavailable at %s: %s", url, exc)
+        return False
+
+
+def _configure_caches():
+    if not REDIS_URL or not USE_REDIS_CACHE:
+        if REDIS_URL and not USE_REDIS_CACHE:
+            _settings_logger.info(
+                "REDIS_URL is set but USE_REDIS_CACHE=True; using LocMemCache."
+            )
+        return _LOC_MEM_CACHES
+
+    if not _redis_is_reachable(REDIS_URL):
+        if REDIS_REQUIRED:
+            raise RuntimeError(
+                f"REDIS_REQUIRED=True but Redis is unreachable at {REDIS_URL}. "
+                "Start Redis or unset REDIS_REQUIRED for fallback."
+            )
+        _settings_logger.warning(
+            "Redis unreachable; falling back to LocMemCache. "
+            "Rate limits will be per-process only."
+        )
+        return _LOC_MEM_CACHES
+
+    return {
         "default": {
             "BACKEND": "django_redis.cache.RedisCache",
             "LOCATION": REDIS_URL,
             "OPTIONS": {
                 "CLIENT_CLASS": "django_redis.client.DefaultClient",
-                "CONNECTION_POOL_KWARGS": {"ssl_cert_reqs": None}
-            }
+                "IGNORE_EXCEPTIONS": True,
+                "CONNECTION_POOL_KWARGS": {"ssl_cert_reqs": None},
+            },
         }
     }
-else:
-    CACHES = {
-        "default": {
-            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-        }
-    }
+
+
+CACHES = _configure_caches()
+
+if CACHES["default"]["BACKEND"] == "django.core.cache.backends.locmem.LocMemCache":
+    # LocMem is valid for local dev; ratelimit prefers a shared cache in production.
+    SILENCED_SYSTEM_CHECKS = [
+        "django_ratelimit.E003",
+        "django_ratelimit.W001",
+    ]
 
 _cloudinary_cloud = config("CLOUDINARY_CLOUD_NAME", default=None)
 _cloudinary_key = config("CLOUDINARY_API_KEY", default=None)
@@ -158,9 +217,35 @@ EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='no-reply@parallaxlane.com')
 
+GOOGLE_OAUTH_CLIENT_ID = config('GOOGLE_OAUTH_CLIENT_ID', default='')
+
+OTP_MAX_VERIFY_ATTEMPTS = config('OTP_MAX_VERIFY_ATTEMPTS', default=5, cast=int)
+OTP_LOCKOUT_SECONDS = config('OTP_LOCKOUT_SECONDS', default=900, cast=int)
+OTP_VERIFY_WINDOW_SECONDS = config('OTP_VERIFY_WINDOW_SECONDS', default=300, cast=int)
+
 if not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = 'DENY'
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+    SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=True, cast=bool)
+    SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=31536000, cast=int)
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+    if SECRET_KEY == _INSECURE_SECRET_DEFAULT or len(SECRET_KEY) < 50:
+        raise ImproperlyConfigured(
+            'SECRET_KEY must be set to a unique value of at least 50 characters in production.'
+        )
+
+    if CORS_ALLOW_ALL_ORIGINS:
+        raise ImproperlyConfigured(
+            'CORS_ALLOW_ALL_ORIGINS must be False in production. Set CORS_ALLOWED_ORIGINS explicitly.'
+        )
+
+    if ALLOWED_HOSTS == ['*'] or '*' in ALLOWED_HOSTS:
+        raise ImproperlyConfigured(
+            'ALLOWED_HOSTS must list explicit hostnames in production (not *).'
+        )

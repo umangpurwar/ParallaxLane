@@ -18,21 +18,11 @@
                 STUDENT DASHBOARD
             </div>
             <div class="w-[35%] h-full flex items-center px-8 justify-end">
-                
-                <div v-if="currentOrg" class="flex items-center gap-2 mr-6 border-r border-brutal-border/50 pr-6">
+
+                <div v-if="currentOrg" class="flex items-center mr-6 border-r border-brutal-border/50 pr-6">
                     <span class="text-[9px] uppercase tracking-widest font-bold text-brutal-red">
                         {{ currentOrg }}
                     </span>
-                    <select v-if="organisations.length > 1" 
-                            @change="switchOrganisation" 
-                            :disabled="isSwitching"
-                            class="bg-transparent border border-brutal-border text-[9px] uppercase tracking-widest font-bold text-gray-700 py-1 px-2 focus:outline-none cursor-pointer hover:border-brutal-ink transition-colors"
-                            :class="{'opacity-50 cursor-wait': isSwitching}">
-                        <option value="" disabled selected>SWITCH</option>
-                        <option v-for="org in organisations" :key="org.slug" :value="org.slug" :disabled="org.name === currentOrg">
-                            {{ org.name }}
-                        </option>
-                    </select>
                 </div>
 
                 <div class="text-[9px] uppercase tracking-widest font-bold text-gray-500 mr-8">
@@ -111,7 +101,7 @@
                 </p>
 
                 <div class="flex-1 overflow-y-auto pr-4 pb-4 flex flex-col gap-4">
-                    <div v-for="result in pastResults" :key="result.id" 
+                    <div v-for="result in pastResults" :key="result.attempt_id" 
                          @click="openResultModal(result)"
                          class="flex justify-between items-end pb-4 border-b border-brutal-border border-opacity-50 cursor-pointer group hover:bg-black/5 p-2 transition-colors shrink-0">
                         <div class="overflow-hidden pr-4 flex-1">
@@ -123,7 +113,7 @@
                             </p>
                         </div>
                         <span class="text-2xl font-medium tracking-tighter shrink-0">
-                         {{ result.score }}/{{ result.total_questions }}
+                         {{ result.points_scored }}/{{ result.total_points }}
                         </span>
                     </div>
 
@@ -156,7 +146,7 @@
             <div class="flex justify-between items-end mb-8 bg-white border-2 border-brutal-ink p-4">
               <span class="text-[10px] uppercase tracking-widest font-bold text-gray-500">Final Score</span>
               <span class="text-5xl font-black tracking-tighter" :class="selectedResult.status === 'Terminated' ? 'text-brutal-red' : 'text-brutal-ink'">
-                {{ calculatePercentage(selectedResult.score, selectedResult.total_questions) }}%
+                {{ calculatePercentage(selectedResult.points_scored, selectedResult.total_points) }}%
               </span>
             </div>
 
@@ -194,7 +184,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from "vue"
 import { useRouter } from "vue-router"
-import api, { setAuthData } from "../services/api"
+import api, { logout as apiLogout } from "../services/api"
 
 const router = useRouter()
 const username = ref("Student")
@@ -202,10 +192,7 @@ const username = ref("Student")
 const allExams = ref([])
 const pastResults = ref([])
 
-// NEW: Multi-tenant State
-const organisations = ref([])
 const currentOrg = ref("")
-const isSwitching = ref(false)
 
 // Modal States
 const showResultModal = ref(false)
@@ -237,8 +224,7 @@ const IDLE_TIMEOUT_MS = 5 * 60 * 1000
 const resetIdleTimer = () => {
   if (idleTimer) clearTimeout(idleTimer)
   idleTimer = setTimeout(() => {
-    localStorage.clear()
-    router.push('/login')
+    logout()
   }, IDLE_TIMEOUT_MS)
 }
 
@@ -259,7 +245,7 @@ const cleanupActivityListeners = () => {
 const fetchDashboardData = async () => {
   try {
     const examRes = await api.get('exams/')
-    allExams.value = examRes.data || []
+    allExams.value = examRes.data?.results || examRes.data || []
 
     try {
       const resultsRes = await api.get('exams/my-results/')
@@ -269,45 +255,6 @@ const fetchDashboardData = async () => {
     }
   } catch (error) {
     console.error("Failed to load dashboard data", error)
-  }
-}
-
-// NEW: Fetch user organisations
-const fetchOrganisations = async () => {
-  try {
-    const res = await api.get('organisations/mine/')
-    organisations.value = res.data || []
-  } catch (error) {
-    console.error("Failed to load organisations", error)
-  }
-}
-
-// NEW: Switch Organisation
-const switchOrganisation = async (event) => {
-  const slug = event.target.value
-  if (!slug) return
-  
-  isSwitching.value = true
-  
-  try {
-    const res = await api.post(`organisations/${slug}/switch/`)
-    const data = res.data
-
-    setAuthData({
-      org_slug: data.org_slug,
-      org_name: data.org_name,
-      org_role: data.org_role,
-      org_plan: data.org_plan
-    })
-
-    currentOrg.value = data.org_name
-    event.target.value = "" // Reset dropdown
-    
-    await fetchDashboardData()
-  } catch (error) {
-    console.error("Failed to switch organisation", error)
-  } finally {
-    isSwitching.value = false
   }
 }
 
@@ -328,8 +275,6 @@ onMounted(() => {
   fetchDashboardData()
   dashboardInterval = setInterval(fetchDashboardData, 5000)
   setupActivityListeners()
-  
-  fetchOrganisations()
 })
 
 onUnmounted(() => {
@@ -372,8 +317,8 @@ const formatDate = (dateString) => {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-const logout = () => {
-  localStorage.clear()
+const logout = async () => {
+  await apiLogout()
   router.push("/login")
 }
 </script>

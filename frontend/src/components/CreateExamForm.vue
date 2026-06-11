@@ -172,11 +172,6 @@ const removeQuestion = (index) => {
   formData.value.questions.splice(index, 1);
 };
 
-const getHeaders = () => ({
-  'Authorization': `Bearer ${localStorage.getItem("access_token")}`,
-  'Content-Type': 'application/json'
-});
-
 const submitExam = async () => {
   isSubmitting.value = true;
   errorMessage.value = '';
@@ -191,6 +186,14 @@ const submitExam = async () => {
 
     if (payload.end_time) {
       payload.end_time = new Date(payload.end_time).toISOString();
+    } else {
+      const end = new Date();
+      end.setDate(end.getDate() + 7);
+      payload.end_time = end.toISOString();
+    }
+
+    if (!payload.start_time) {
+      payload.start_time = new Date().toISOString();
     }
 
     // VALIDATE QUESTIONS (Using the UI format)
@@ -239,31 +242,10 @@ const submitExam = async () => {
     });
     // --- END TRANSFORMATION ---
 
-    // DEBUG PAYLOAD (IMPORTANT)
-    console.log("PAYLOAD SENT:", payload);
-
-    // SEND REQUEST
-    const url = isEditMode.value
-      ? `${API_BASE_URL}/exam/${editExamId.value}/update/`
-      : `${API_BASE_URL}/exam/create/`;
-
-    const method = isEditMode.value ? 'PATCH' : 'POST';
-
-    const response = await fetch(url, {
-      method,
-      headers: getHeaders(),
-      body: JSON.stringify(payload)
-    });
-
-    // READ RESPONSE ALWAYS
-    const data = await response.json();
-
-    console.log("BACKEND RESPONSE:", data);
-
-    // HANDLE RESPONSE
-    if (!response.ok) {
-      errorMessage.value = JSON.stringify(data);
-      return;
+    if (isEditMode.value) {
+      await api.patch(`admin/exam/${editExamId.value}/update/`, payload);
+    } else {
+      await api.post('admin/exam/create/', payload);
     }
 
     // SUCCESS

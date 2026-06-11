@@ -2,6 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
+from organisations.utils import sync_user_organisation_context
 
 User = get_user_model()
 
@@ -63,23 +64,12 @@ class CustomTokenSerializer(TokenObtainPairSerializer):
             "display_name": (user.name.split(" ")[0] if user.name else user.email.split("@")[0]),
         }
 
-        # Organisation logic
-        org = getattr(user, "current_organisation", None)
-
-        if org:
-            membership = org.members.filter(user=user, is_active=True).first()
-            data.update({
-                "org_slug": org.slug,
-                "org_name": org.name,
-                "org_plan": org.plan,
-                "org_role": membership.role if membership else None
-            })
-        else:
-            data.update({
-                "org_slug": None,
-                "org_name": None,
-                "org_plan": None,
-                "org_role": None
-            })
+        org_data = sync_user_organisation_context(user)
+        data.update({
+            "org_slug": org_data.get("org_slug"),
+            "org_name": org_data.get("org_name"),
+            "org_plan": org_data.get("org_plan"),
+            "org_role": org_data.get("org_role"),
+        })
 
         return data

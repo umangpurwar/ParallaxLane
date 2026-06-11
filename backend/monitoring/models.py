@@ -15,6 +15,11 @@ class Violation(models.Model):
     timestamp = models.DateTimeField(auto_now_add=True)
     metadata = models.JSONField(blank=True, null=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=["-timestamp"], name="violation_timestamp_desc_idx"),
+        ]
+
     def __str__(self):
         return f"{self.violation_type} - {self.timestamp}"
 
@@ -24,5 +29,10 @@ class Screenshot(models.Model):
 
     image = models.URLField()
     timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["-timestamp"], name="screenshot_timestamp_desc_idx"),
+        ]
 
     flagged = models.BooleanField(default=False)

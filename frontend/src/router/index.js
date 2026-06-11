@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from "vue-router"
+import { STAFF_ROLES } from "@/services/api"
 
 import HomeView from "../views/HomeView.vue"
 import LoginView from "../views/LoginView.vue"
@@ -16,16 +17,7 @@ const routes = [
   { path: "/register", component: RegisterView },
   { path: "/unauthorized", component: UnauthorizedView },
 
-  { path: "/create-org", component: OrgCreateView },
-
-  { path: "/dashboard", component: ExamDashboard, meta: { requiresAuth: true } },
-  { path: "/exam/:id", name: "Exam", component: ExamPage, meta: { requiresAuth: true } },
-
-  {
-    path: "/auth/google",
-    name: "GoogleAuth",
-    component: () => import("../views/GoogleAuth.vue")
-  },
+  { path: "/create-org", component: OrgCreateView, meta: { requiresAuth: true } },
 
   {
     path: "/org-home",
@@ -35,10 +27,40 @@ const routes = [
 
   {
     path: "/join-org",
-    component: () => import("../views/JoinOrgView.vue")
+    component: () => import("../views/JoinOrgView.vue"),
+    meta: { requiresAuth: true }
   },
 
-  { path: "/admin", component: AdminDashboard, meta: { requiresAuth: true, isAdmin: true } }
+  {
+    path: "/dashboard",
+    component: ExamDashboard,
+    meta: { requiresAuth: true, requiresOrg: true, requiresCandidate: true }
+  },
+
+  {
+    path: "/exam/:id",
+    name: "Exam",
+    component: ExamPage,
+    meta: { requiresAuth: true, requiresOrg: true, requiresCandidate: true }
+  },
+
+  {
+    path: "/auth/google",
+    name: "GoogleAuth",
+    component: () => import("../views/GoogleAuth.vue")
+  },
+
+  {
+    path: "/admin",
+    component: AdminDashboard,
+    meta: { requiresAuth: true, requiresOrg: true, requiresStaff: true }
+  },
+
+  {
+    path: "/org-settings",
+    component: () => import("../views/OrgSettingsView.vue"),
+    meta: { requiresAuth: true, requiresOrg: true, requiresStaff: true }
+  }
 ]
 
 const router = createRouter({
@@ -63,14 +85,13 @@ const clearExamState = () => {
   })
 }
 
+const ORG_HUB_PATHS = ["/org-home", "/create-org", "/join-org", "/org-settings"]
+
 router.beforeEach((to, from) => {
   const token = localStorage.getItem("access_token") || localStorage.getItem("token")
   const orgSlug = localStorage.getItem("org_slug")
   const orgRole = localStorage.getItem("org_role")
 
-  const isAdmin = orgRole === "owner" || orgRole === "admin"
-
-  // Handle browser back navigation (exam safety)
   if (isBrowserNavigation && token) {
     isBrowserNavigation = false
 
@@ -82,7 +103,6 @@ router.beforeEach((to, from) => {
 
   isBrowserNavigation = false
 
-  // Auth check
   if (to.meta.requiresAuth && !token) {
     if (to.path !== '/login' && to.path !== '/') {
       return "/unauthorized"
@@ -90,29 +110,32 @@ router.beforeEach((to, from) => {
     return "/login"
   }
 
-  // Prevent logged-in users from going to login/register
   if (token && (to.path === "/login" || to.path === "/register")) {
     return "/org-home"
   }
 
-  // Org onboarding flow
-  if (token && !orgSlug) {
-    if (to.path !== "/org-home" && to.path !== "/create-org" && to.path !== "/join-org") {
-      return "/org-home"
-    }
+  if (token && !orgSlug && to.meta.requiresOrg) {
+    return "/org-home"
   }
 
-  // Prevent going back to create-org after org exists
+  if (token && !orgSlug && !ORG_HUB_PATHS.includes(to.path)) {
+    return "/org-home"
+  }
+
   if (token && orgSlug && to.path === "/create-org") {
     return "/org-home"
   }
 
-  // Admin check
-  if (to.meta.isAdmin && !isAdmin) {
-    return "/unauthorized"
+  if (to.meta.requiresStaff && !STAFF_ROLES.includes(orgRole)) {
+    return "/org-home"
+  }
+
+  if (to.meta.requiresCandidate && orgRole !== "candidate") {
+    return "/org-home"
   }
 
   return true
 })
 
 export default router
+

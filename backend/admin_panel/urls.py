@@ -17,5 +17,6 @@ urlpatterns = [
     path("exam/<int:exam_id>/delete/", delete_exam),
     path("users/", list_all_users),
     path("exam/<int:exam_id>/results/", exam_results),
+    path("exam/<int:exam_id>/export/", exam_export_report),
     path("exam/<int:exam_id>/qa/", exam_qa),
 ]

@@ -8,7 +8,6 @@
 
     <div class="relative z-10 max-w-md w-full bg-brutal-paper text-brutal-ink border-4 border-brutal-ink p-10 flex flex-col shadow-[12px_12px_0px_0px_rgba(239,63,35,1)]">
       
-      <!-- LOGOUT -->
       <button
         @click="logout"
         class="absolute top-3 right-3 text-[9px] uppercase tracking-widest font-bold text-gray-500 hover:text-brutal-red"
@@ -16,18 +15,16 @@
         Logout
       </button>
 
-      <!-- GREETING -->
       <h1 class="text-3xl font-black tracking-tighter text-brutal-ink mb-2 uppercase italic text-center">
         Hello {{ username }}
       </h1>
 
       <p class="text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-8 border-b-2 border-brutal-ink pb-4 text-center">
-        Select your organisation
+        Select your organisation to continue
       </p>
 
-      <!-- ORG LIST -->
       <div v-if="isLoading" class="text-center text-xs">
-        Loading...
+        Loading organisations...
       </div>
 
       <div v-else-if="organisations.length" class="flex flex-col gap-4 mb-6">
@@ -35,17 +32,22 @@
           v-for="org in organisations"
           :key="org.slug"
           @click="selectOrg(org)"
-          class="w-full py-4 text-[10px] uppercase tracking-super-wide font-bold border-2 border-brutal-ink text-brutal-ink hover:bg-brutal-ink hover:text-white transition-all"
+          :disabled="isSelecting"
+          class="w-full py-4 text-[10px] uppercase tracking-super-wide font-bold border-2 border-brutal-ink text-brutal-ink hover:bg-brutal-ink hover:text-white transition-all disabled:opacity-50"
         >
-          {{ org.name }} ({{ org.role }})
+          {{ org.name }}
+          <span class="block text-[8px] mt-1 opacity-70">{{ org.role }} · {{ (org.plan || 'free').toUpperCase() }}</span>
         </button>
       </div>
 
       <div v-else class="text-center text-xs text-gray-500 mb-6">
-        No organisations found
+        No organisations found. Create one or join with an invite code.
       </div>
 
-      <!-- CREATE -->
+      <p v-if="errorMessage" class="text-[10px] uppercase font-bold text-brutal-red text-center mb-4">
+        {{ errorMessage }}
+      </p>
+
       <button
         @click="router.push('/create-org')"
         class="w-full py-4 text-[10px] uppercase tracking-super-wide font-bold border-2 border-brutal-ink text-brutal-ink hover:bg-brutal-ink hover:text-white transition-all mb-4"
@@ -53,7 +55,6 @@
         Create Organisation
       </button>
 
-      <!-- JOIN -->
       <button
         @click="router.push('/join-org')"
         class="w-full py-4 text-[10px] uppercase tracking-super-wide font-bold border-2 border-brutal-ink text-brutal-ink hover:bg-brutal-ink hover:text-white transition-all"
@@ -68,15 +69,24 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import api, { setAuthData } from '@/services/api'
+import api, {
+  clearOrgContext,
+  setOrgContext,
+  redirectAfterOrgSelect,
+  logout as apiLogout,
+} from '@/services/api'
 
 const router = useRouter()
 
 const username = ref('User')
 const organisations = ref([])
 const isLoading = ref(false)
+const isSelecting = ref(false)
+const errorMessage = ref('')
 
 onMounted(async () => {
+  clearOrgContext()
+
   username.value =
     localStorage.getItem("username") ||
     localStorage.getItem("email") ||
@@ -87,34 +97,39 @@ onMounted(async () => {
 
 const fetchOrganisations = async () => {
   isLoading.value = true
+  errorMessage.value = ''
   try {
     const res = await api.get("organisations/my/")
-    organisations.value = res.data || []
+    organisations.value = res.data?.organisations || []
   } catch (err) {
     console.error("Failed to fetch orgs", err)
+    errorMessage.value = "Could not load organisations."
   } finally {
     isLoading.value = false
   }
 }
 
-const logout = () => {
-  localStorage.clear()
+const logout = async () => {
+  await apiLogout()
   router.push('/login')
 }
 
-const selectOrg = (org) => {
-  // store selected org
-  setAuthData({
-    org_slug: org.slug,
-    org_role: org.role,
-    org_name: org.name
-  })
+const selectOrg = async (org) => {
+  isSelecting.value = true
+  errorMessage.value = ''
 
-  if (org.role === "owner" || org.role === "admin") {
-    router.push('/admin')
-  } else {
-    router.push('/dashboard')
+  try {
+    const res = await api.post(`organisations/${org.slug}/switch/`)
+    setOrgContext(res.data)
+
+    const role = res.data.role || res.data.org_role || org.role
+    redirectAfterOrgSelect(router, role)
+  } catch (err) {
+    console.error("Failed to switch organisation", err)
+    errorMessage.value = err.response?.data?.error || "Failed to select organisation."
+  } finally {
+    isSelecting.value = false
   }
 }
 </script>
-
+

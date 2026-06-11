@@ -100,5 +100,40 @@ class OrganisationInvite(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=["email", "accepted"], name="orginvite_email_accepted_idx"),
+        ]
+
     def __str__(self):
         return f"{self.email} -> {self.organisation}"
+
+
+class Coupon(models.Model):
+    PLAN_CHOICES = Organisation.PLAN_CHOICES
+
+    code = models.CharField(max_length=50, unique=True)
+    plan = models.CharField(max_length=20, choices=PLAN_CHOICES)
+    active = models.BooleanField(default=True)
+    max_uses = models.PositiveIntegerField(default=100)
+    used_count = models.PositiveIntegerField(default=0)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.code} → {self.plan}"
+
+    @property
+    def is_expired(self):
+        from django.utils.timezone import now
+        return self.expires_at is not None and now() > self.expires_at
+
+    @property
+    def is_exhausted(self):
+        return self.used_count >= self.max_uses
+
+    def is_redeemable(self):
+        return self.active and not self.is_expired and not self.is_exhausted

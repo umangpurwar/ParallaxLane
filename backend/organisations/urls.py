@@ -2,7 +2,10 @@ from django.urls import path
 from .views import *
 
 urlpatterns = [
+    path("join/", JoinOrganisationView.as_view()),
     path("create/", CreateOrganisationView.as_view()),
+    path("settings/", OrganisationSettingsView.as_view()),
+    path("redeem-coupon/", RedeemCouponView.as_view()),
     path("mine/", MyOrganisationsView.as_view()),
     path("<slug:slug>/switch/", SwitchOrganisationView.as_view()),
     path("<slug:slug>/invite/", InviteMemberView.as_view()),
