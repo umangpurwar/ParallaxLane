@@ -11,18 +11,32 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RunSQL(
-            sql=(
-                "CREATE INDEX IF NOT EXISTS screenshot_timestamp_desc_idx "
-                "ON monitoring_screenshot (timestamp DESC);"
-            ),
-            reverse_sql="DROP INDEX IF EXISTS screenshot_timestamp_desc_idx;",
-        ),
-        migrations.RunSQL(
-            sql=(
-                "CREATE INDEX IF NOT EXISTS violation_timestamp_desc_idx "
-                "ON monitoring_violation (timestamp DESC);"
-            ),
-            reverse_sql="DROP INDEX IF EXISTS violation_timestamp_desc_idx;",
-        ),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunSQL(
+                    sql=(
+                        "CREATE INDEX IF NOT EXISTS screenshot_timestamp_desc_idx "
+                        "ON monitoring_screenshot (timestamp DESC);"
+                    ),
+                    reverse_sql="DROP INDEX IF EXISTS screenshot_timestamp_desc_idx;",
+                ),
+                migrations.RunSQL(
+                    sql=(
+                        "CREATE INDEX IF NOT EXISTS violation_timestamp_desc_idx "
+                        "ON monitoring_violation (timestamp DESC);"
+                    ),
+                    reverse_sql="DROP INDEX IF EXISTS violation_timestamp_desc_idx;",
+                ),
+            ],
+            state_operations=[
+                migrations.AddIndex(
+                    model_name='screenshot',
+                    index=models.Index(fields=['-timestamp'], name='screenshot_timestamp_desc_idx'),
+                ),
+                migrations.AddIndex(
+                    model_name='violation',
+                    index=models.Index(fields=['-timestamp'], name='violation_timestamp_desc_idx'),
+                ),
+            ]
+        )
     ]

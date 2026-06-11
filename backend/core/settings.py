@@ -1,9 +1,13 @@
 from pathlib import Path
 import os
+import sys
 from decouple import config, Csv
 from datetime import timedelta
 from dotenv import load_dotenv
 from django.core.exceptions import ImproperlyConfigured
+
+# Check if running tests
+TESTING = len(sys.argv) > 1 and sys.argv[1] == "test"
 
 load_dotenv()
 
@@ -223,7 +227,7 @@ OTP_MAX_VERIFY_ATTEMPTS = config('OTP_MAX_VERIFY_ATTEMPTS', default=5, cast=int)
 OTP_LOCKOUT_SECONDS = config('OTP_LOCKOUT_SECONDS', default=900, cast=int)
 OTP_VERIFY_WINDOW_SECONDS = config('OTP_VERIFY_WINDOW_SECONDS', default=300, cast=int)
 
-if not DEBUG:
+if not DEBUG and not TESTING:
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = 'DENY'
