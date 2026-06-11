@@ -102,111 +102,111 @@ class SubmitExamView(generics.GenericAPIView):
         user = request.user
         org = user.current_organisation
 
-        try:
-            exam = Exam.objects.get(pk=pk, organisation=org)
-        except Exam.DoesNotExist:
-            return Response({"error": "Exam not found"}, status=404)
+        with transaction.atomic():
+            try:
+                exam = Exam.objects.select_for_update().get(pk=pk, organisation=org)
+            except Exam.DoesNotExist:
+                return Response({"error": "Exam not found"}, status=404)
 
-        attempt = ExamAttempt.objects.filter(
-            user=user, exam=exam, status="active"
-        ).first()
+            attempt = ExamAttempt.objects.select_for_update().filter(
+                user=user, exam=exam, status="active"
+            ).first()
 
-        if not attempt:
-            return Response({"error": "No active exam attempt found"}, status=400)
+            if not attempt:
+                return Response({"error": "No active exam attempt found"}, status=400)
 
-        if attempt.status == "terminated":
-            return Response({"error": "Exam has been terminated"}, status=403)
+            if attempt.status == "terminated":
+                return Response({"error": "Exam has been terminated"}, status=403)
 
-        if attempt.status == "completed":
-            return Response({"error": "Exam already submitted"}, status=400)
+            if attempt.status == "completed":
+                return Response({"error": "Exam already submitted"}, status=400)
 
-        answers = request.data.get("answers", {})
-        if not isinstance(answers, dict):
-            return Response({"error": "answers must be an object"}, status=400)
+            answers = request.data.get("answers", {})
+            if not isinstance(answers, dict):
+                return Response({"error": "answers must be an object"}, status=400)
 
-        questions = list(
-            exam.questions.prefetch_related("options").all()
-        )
-        question_count = len(questions)
-        if len(answers) > question_count:
-            return Response(
-                {"error": f"Too many answers submitted (max {question_count})"},
-                status=400,
+            questions = list(
+                exam.questions.prefetch_related("options").all()
+            )
+            question_count = len(questions)
+            if len(answers) > question_count:
+                return Response(
+                    {"error": f"Too many answers submitted (max {question_count})"},
+                    status=400,
+                )
+
+            questions_by_id = {q.id: q for q in questions}
+            options_by_question = {
+                q.id: {o.id: o for o in q.options.all()} for q in questions
+            }
+            existing_answer_qids = set(
+                Answer.objects.filter(attempt=attempt).values_list("question_id", flat=True)
             )
 
-        questions_by_id = {q.id: q for q in questions}
-        options_by_question = {
-            q.id: {o.id: o for o in q.options.all()} for q in questions
-        }
-        existing_answer_qids = set(
-            Answer.objects.filter(attempt=attempt).values_list("question_id", flat=True)
-        )
+            score = 0
+            total_points = 0
+            answers_to_create = []
 
-        score = 0
-        total_points = 0
-        answers_to_create = []
-
-        for question_id_raw, submitted_answer in answers.items():
-            try:
-                question_id = int(question_id_raw)
-            except (TypeError, ValueError):
-                continue
-
-            question = questions_by_id.get(question_id)
-            if not question:
-                continue
-
-            if question_id in existing_answer_qids:
-                continue
-
-            is_correct = False
-            total_points += question.points
-            option_map = options_by_question.get(question_id, {})
-
-            if question.question_type in ["mcq", "true_false"]:
+            for question_id_raw, submitted_answer in answers.items():
                 try:
-                    option_id = int(submitted_answer)
+                    question_id = int(question_id_raw)
                 except (TypeError, ValueError):
                     continue
-                option = option_map.get(option_id)
-                if not option:
+
+                question = questions_by_id.get(question_id)
+                if not question:
                     continue
 
-                answer = Answer(
-                    attempt=attempt,
-                    question=question,
-                    selected_option=option,
-                )
-                if option.is_correct:
-                    score += question.points
-                    is_correct = True
-                else:
-                    score -= question.negative_points
-                answer.is_correct = is_correct
-                answers_to_create.append(answer)
+                if question_id in existing_answer_qids:
+                    continue
 
-            elif question.question_type == "short_answer":
-                answer = Answer(
-                    attempt=attempt,
-                    question=question,
-                    text_answer=submitted_answer,
-                )
-                correct = (question.correct_text_answer or "").strip().lower()
-                user_ans = str(submitted_answer).strip().lower()
-                if correct and user_ans == correct:
-                    score += question.points
-                    is_correct = True
-                else:
-                    score -= question.negative_points
-                answer.is_correct = is_correct
-                answers_to_create.append(answer)
+                is_correct = False
+                total_points += question.points
+                option_map = options_by_question.get(question_id, {})
 
-            elif question.question_type in ["file_upload", "image_based"]:
-                answers_to_create.append(
-                    Answer(attempt=attempt, question=question, is_correct=None)
-                )
+                if question.question_type in ["mcq", "true_false"]:
+                    try:
+                        option_id = int(submitted_answer)
+                    except (TypeError, ValueError):
+                        continue
+                    option = option_map.get(option_id)
+                    if not option:
+                        continue
 
-        with transaction.atomic():
+                    answer = Answer(
+                        attempt=attempt,
+                        question=question,
+                        selected_option=option,
+                    )
+                    if option.is_correct:
+                        score += question.points
+                        is_correct = True
+                    else:
+                        score -= question.negative_points
+                    answer.is_correct = is_correct
+                    answers_to_create.append(answer)
+
+                elif question.question_type == "short_answer":
+                    answer = Answer(
+                        attempt=attempt,
+                        question=question,
+                        text_answer=submitted_answer,
+                    )
+                    correct = (question.correct_text_answer or "").strip().lower()
+                    user_ans = str(submitted_answer).strip().lower()
+                    if correct and user_ans == correct:
+                        score += question.points
+                        is_correct = True
+                    else:
+                        score -= question.negative_points
+                    answer.is_correct = is_correct
+                    answers_to_create.append(answer)
+
+                elif question.question_type in ["file_upload", "image_based"]:
+                    answers_to_create.append(
+                        Answer(attempt=attempt, question=question, is_correct=None)
+                    )
+
             if answers_to_create:
                 Answer.objects.bulk_create(answers_to_create)
             attempt.points_scored = score
@@ -255,7 +255,11 @@ class CreateExamView(generics.CreateAPIView):
 
     @method_decorator(ratelimit(key='user', rate='2/m', method='POST', block=True))
     def perform_create(self, serializer):
+        org = self.request.user.current_organisation
+        if org.exams.count() >= org.max_exams:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({"error": f"Exam limit reached (max {org.max_exams})"})
         serializer.save(
             created_by=self.request.user,
-            organisation=self.request.user.current_organisation
+            organisation=org
         )

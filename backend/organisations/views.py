@@ -124,6 +124,18 @@ class InviteMemberView(APIView):
                 status=400,
             )
 
+        # Enforce role limits
+        active_members = org.members.filter(is_active=True)
+        if role == OrganisationMember.ROLE_ADMIN:
+            if active_members.filter(role=OrganisationMember.ROLE_ADMIN).count() >= org.max_admins:
+                return Response({"error": f"Admin limit reached (max {org.max_admins})"}, status=400)
+        elif role == OrganisationMember.ROLE_INVIGILATOR:
+            if active_members.filter(role=OrganisationMember.ROLE_INVIGILATOR).count() >= org.max_invigilators:
+                return Response({"error": f"Invigilator limit reached (max {org.max_invigilators})"}, status=400)
+        elif role == OrganisationMember.ROLE_CANDIDATE:
+            if active_members.filter(role=OrganisationMember.ROLE_CANDIDATE).count() >= org.max_candidates:
+                return Response({"error": f"Candidate limit reached (max {org.max_candidates})"}, status=400)
+
         expires_at = None
         if expiry_days:
             try:
@@ -309,6 +321,7 @@ class RedeemCouponView(APIView):
             org = membership.organisation
             org.plan = coupon.plan
             org.save(update_fields=["plan"])
+            org.update_plan_limits()
 
             Coupon.objects.filter(pk=coupon.pk).update(used_count=F("used_count") + 1)
             coupon.refresh_from_db()

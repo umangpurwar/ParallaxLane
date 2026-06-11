@@ -14,6 +14,31 @@ class Organisation(models.Model):
         (PLAN_ENTERPRISE, "Enterprise"),
     ]
 
+    # Default plan limits
+    PLAN_LIMITS = {
+        PLAN_FREE: {
+            "max_exams": 3,
+            "max_candidates": 30,
+            "max_admins": 2,
+            "max_invigilators": 5,
+            "proctoring_enabled": False,
+        },
+        PLAN_PRO: {
+            "max_exams": 20,
+            "max_candidates": 200,
+            "max_admins": 5,
+            "max_invigilators": 20,
+            "proctoring_enabled": True,
+        },
+        PLAN_ENTERPRISE: {
+            "max_exams": 1000,
+            "max_candidates": 10000,
+            "max_admins": 100,
+            "max_invigilators": 200,
+            "proctoring_enabled": True,
+        },
+    }
+
     name = models.CharField(max_length=200)
     slug = models.SlugField(unique=True)
 
@@ -39,6 +64,13 @@ class Organisation(models.Model):
 
     max_admins = models.IntegerField(default=2)
     max_invigilators = models.IntegerField(default=5)
+
+    def update_plan_limits(self):
+        """Update plan limits based on current plan."""
+        limits = self.PLAN_LIMITS.get(self.plan, self.PLAN_LIMITS[self.PLAN_FREE])
+        for key, value in limits.items():
+            setattr(self, key, value)
+        self.save(update_fields=list(limits.keys()))
 
     def __str__(self):
         return f"{self.name} ({self.plan})"

@@ -13,7 +13,9 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from datetime import timedelta
 from django.utils.timezone import now
-import random
+import secrets
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from django.conf import settings
@@ -81,8 +83,10 @@ class SendOTPView(APIView):
             return Response({"error": "User not registered"}, status=400)
 
         EmailOTP.objects.filter(email=email).delete()
-        otp = str(random.randint(100000, 999999))
-        EmailOTP.objects.create(email=email, otp=otp)
+        otp = str(secrets.randbelow(900000) + 100000)  # 6-digit OTP, cryptographically secure
+        otp_record = EmailOTP(email=email)
+        otp_record.set_otp(otp)
+        otp_record.save()
 
         try:
             send_mail(
@@ -125,7 +129,12 @@ class VerifyOTPView(APIView):
         if not user:
             return Response({"error": "User not registered"}, status=400)
 
-        record = EmailOTP.objects.filter(email=email, otp=otp).last()
+        records = EmailOTP.objects.filter(email=email).order_by("-created_at")
+        record = None
+        for r in records:
+            if r.check_otp(otp):
+                record = r
+                break
         if not record:
             record_failed_verify(email)
             return Response({"error": "Invalid OTP"}, status=400)
@@ -173,7 +182,12 @@ class VerifyOTPRegisterView(APIView):
         if not allowed:
             return Response({"error": message}, status=429)
 
-        record = EmailOTP.objects.filter(email=email, otp=otp).last()
+        records = EmailOTP.objects.filter(email=email).order_by("-created_at")
+        record = None
+        for r in records:
+            if r.check_otp(otp):
+                record = r
+                break
         if not record:
             record_failed_verify(email)
             return Response({"error": "Invalid OTP"}, status=400)
@@ -235,7 +249,12 @@ class VerifyOTPForgotView(APIView):
         if not user:
             return Response({"error": "User not registered"}, status=400)
 
-        record = EmailOTP.objects.filter(email=email, otp=otp).last()
+        records = EmailOTP.objects.filter(email=email).order_by("-created_at")
+        record = None
+        for r in records:
+            if r.check_otp(otp):
+                record = r
+                break
         if not record:
             record_failed_verify(email)
             return Response({"error": "Invalid OTP"}, status=400)
@@ -245,6 +264,10 @@ class VerifyOTPForgotView(APIView):
             record_failed_verify(email)
             return Response({"error": "OTP expired"}, status=400)
 
+        try:
+            validate_password(new_password, user)
+        except ValidationError as e:
+            return Response({"error": "\n".join(e.messages)}, status=400)
         user.set_password(new_password)
         user.save()
         record.delete()

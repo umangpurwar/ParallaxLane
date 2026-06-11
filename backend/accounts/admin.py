@@ -16,5 +16,5 @@ class UserAdmin(BaseUserAdmin):
 
 @admin.register(EmailOTP)
 class EmailOTPAdmin(admin.ModelAdmin):
-    list_display = ['email', 'otp', 'created_at']
+    list_display = ['email', 'created_at']
     ordering = ['-created_at']
