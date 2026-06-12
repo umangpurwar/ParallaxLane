@@ -144,7 +144,7 @@ class SubmitExamView(generics.GenericAPIView):
             )
 
             score = 0
-            total_points = 0
+            total_points = sum(q.points for q in questions)
             answers_to_create = []
 
             for question_id_raw, submitted_answer in answers.items():
@@ -161,7 +161,6 @@ class SubmitExamView(generics.GenericAPIView):
                     continue
 
                 is_correct = False
-                total_points += question.points
                 option_map = options_by_question.get(question_id, {})
 
                 if question.question_type in ["mcq", "true_false"]:
@@ -256,9 +255,6 @@ class CreateExamView(generics.CreateAPIView):
     @method_decorator(ratelimit(key='user', rate='2/m', method='POST', block=True))
     def perform_create(self, serializer):
         org = self.request.user.current_organisation
-        if org.exams.count() >= org.max_exams:
-            from rest_framework.exceptions import ValidationError
-            raise ValidationError({"error": f"Exam limit reached (max {org.max_exams})"})
         serializer.save(
             created_by=self.request.user,
             organisation=org

@@ -207,8 +207,21 @@ def _accept_invite_for_user(user, token):
 
     safe_role = sanitize_stored_role(invite.role)
 
+    org = invite.organisation
+    active_members = org.members.filter(is_active=True)
+
+    if safe_role == OrganisationMember.ROLE_ADMIN:
+        if active_members.filter(role=OrganisationMember.ROLE_ADMIN).count() >= org.max_admins:
+            return None, Response({"error": f"Admin limit reached (max {org.max_admins})"}, status=400)
+    elif safe_role == OrganisationMember.ROLE_INVIGILATOR:
+        if active_members.filter(role=OrganisationMember.ROLE_INVIGILATOR).count() >= org.max_invigilators:
+            return None, Response({"error": f"Invigilator limit reached (max {org.max_invigilators})"}, status=400)
+    elif safe_role == OrganisationMember.ROLE_CANDIDATE:
+        if active_members.filter(role=OrganisationMember.ROLE_CANDIDATE).count() >= org.max_candidates:
+            return None, Response({"error": f"Candidate limit reached (max {org.max_candidates})"}, status=400)
+
     member, _ = OrganisationMember.objects.get_or_create(
-        organisation=invite.organisation, user=user, defaults={"role": safe_role}
+        organisation=org, user=user, defaults={"role": safe_role}
     )
 
     invite.accepted = True

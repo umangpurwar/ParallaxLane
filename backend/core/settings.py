@@ -125,6 +125,9 @@ REDIS_URL = config("REDIS_URL", default=None)
 USE_REDIS_CACHE = config("USE_REDIS_CACHE", default=False, cast=bool)
 # When True and Redis is unreachable at startup, raise instead of falling back.
 REDIS_REQUIRED = config("REDIS_REQUIRED", default=not DEBUG, cast=bool)
+# For django_ratelimit
+RATELIMIT_VIEW = "core.views.ratelimit_error"  # Dummy view name (doesn't need to exist)
+RATELIMIT_ENABLE = config("RATELIMIT_ENABLE", default=True, cast=bool)
 
 _LOC_MEM_CACHES = {
     "default": {

@@ -200,6 +200,11 @@ class VerifyOTPRegisterView(APIView):
         if User.objects.filter(email=email).exists():
             return Response({"error": "User already exists"}, status=400)
 
+        try:
+            validate_password(password)
+        except ValidationError as e:
+            return Response({"error": "\n".join(e.messages)}, status=400)
+
         user = User.objects.create_user(
             username=email,
             email=email,

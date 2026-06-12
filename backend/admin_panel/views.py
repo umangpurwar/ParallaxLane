@@ -30,22 +30,32 @@ def live_monitor(request, exam_id):
 
     data = []
 
+    from django.db.models import OuterRef, Subquery
+
+    latest_violation_qs = Violation.objects.filter(
+        attempt=OuterRef('pk')
+    ).order_by('-timestamp')
+
+    latest_screenshot_qs = Screenshot.objects.filter(
+        attempt=OuterRef('pk')
+    ).order_by('-timestamp')
+
     attempts = (
         ExamAttempt.objects
         .filter(exam=exam)
         .select_related("user")
-        .prefetch_related(
-            Prefetch(
-                "violations",
-                queryset=Violation.objects.order_by("-timestamp"),
-            ),
-            Prefetch(
-                "screenshot_set",
-                queryset=Screenshot.objects.order_by("-timestamp"),
-            ),
+        .annotate(
+            latest_violation_id=Subquery(latest_violation_qs.values('id')[:1]),
+            latest_screenshot_id=Subquery(latest_screenshot_qs.values('id')[:1])
         )
         .order_by("user_id", "-start_time", "-id")
     )
+
+    violation_ids = [a.latest_violation_id for a in attempts if a.latest_violation_id]
+    screenshot_ids = [a.latest_screenshot_id for a in attempts if a.latest_screenshot_id]
+
+    violations_map = {v.id: v for v in Violation.objects.filter(id__in=violation_ids)}
+    screenshots_map = {s.id: s for s in Screenshot.objects.filter(id__in=screenshot_ids)}
 
     seen_users = set()
     current_time = now()
@@ -62,12 +72,10 @@ def live_monitor(request, exam_id):
         if attempt.status == 'terminated':
             display_status = 'terminated'
 
-        violations = list(attempt.violations.all())
-        latest_violation = violations[0] if violations else None
+        latest_violation = violations_map.get(attempt.latest_violation_id) if attempt.latest_violation_id else None
         metadata = latest_violation.metadata if latest_violation and latest_violation.metadata else {}
 
-        screenshots = list(attempt.screenshot_set.all())
-        latest_screenshot = screenshots[0] if screenshots else None
+        latest_screenshot = screenshots_map.get(attempt.latest_screenshot_id) if attempt.latest_screenshot_id else None
 
         system_health = {
             "camera": metadata.get("camera", True),

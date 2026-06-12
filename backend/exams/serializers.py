@@ -91,8 +91,13 @@ class ExamSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
+        from organisations.models import Organisation
         request = self.context.get("request")
-        org = request.user.current_organisation
+        org = Organisation.objects.select_for_update().get(id=request.user.current_organisation_id)
+
+        if org.exams.count() >= org.max_exams:
+            raise serializers.ValidationError({"error": f"Exam limit reached (max {org.max_exams})"})
+
         features = get_plan_features(org)
         allowed_types = features.get("allowed_question_types", [])
         questions_data = validated_data.pop("questions")
