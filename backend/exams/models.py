@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.db import models
 from django.conf import settings
 from django.utils.timezone import now
@@ -107,6 +109,9 @@ class ExamAttempt(models.Model):
     exam = models.ForeignKey(Exam, on_delete=models.CASCADE, db_index=True)
 
     start_time = models.DateTimeField(auto_now_add=True)
+    # Calculated by the server when the attempt starts. It is persisted so
+    # resuming an attempt cannot extend the time available to the candidate.
+    deadline = models.DateTimeField(null=True, blank=True)
     end_time = models.DateTimeField(null=True, blank=True)
 
     # scoring
@@ -130,6 +135,24 @@ class ExamAttempt(models.Model):
 
     def __str__(self):
         return f"{self.user} - {self.exam}"
+
+    def calculate_deadline(self, start_time=None):
+        """Return the server-authoritative deadline for this attempt."""
+        start_time = start_time or self.start_time
+        duration_deadline = start_time + timedelta(minutes=self.exam.duration)
+        return min(duration_deadline, self.exam.end_time)
+
+    def ensure_deadline(self):
+        """Persist a deadline for legacy attempts that predate this field."""
+        if self.deadline is None:
+            self.deadline = self.calculate_deadline()
+            self.save(update_fields=["deadline"])
+        return self.deadline
+
+    def is_expired(self, at_time=None):
+        """An attempt expires at its deadline; the client cannot affect this."""
+        at_time = at_time or now()
+        return at_time >= self.ensure_deadline()
 
 
 # =========================
@@ -163,6 +186,14 @@ class Answer(models.Model):
     )
 
     is_correct = models.BooleanField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["attempt", "question"],
+                name="unique_answer_per_attempt_question",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.attempt} - {self.question}"

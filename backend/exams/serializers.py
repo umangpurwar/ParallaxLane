@@ -132,6 +132,15 @@ class ExamSerializer(serializers.ModelSerializer):
         allowed_types = features.get("allowed_question_types", [])
         questions_data = validated_data.pop("questions", None)
 
+        if questions_data is not None and ExamAttempt.objects.filter(
+            exam=instance,
+            status="active",
+            answers__isnull=False,
+        ).exists():
+            raise serializers.ValidationError({
+                "error": "Cannot replace questions while an active attempt has saved answers."
+            })
+
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
@@ -170,7 +179,7 @@ class ExamAttemptSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExamAttempt
         fields = [
-            "id", "user", "exam", "start_time", "end_time",
+            "id", "user", "exam", "start_time", "deadline", "end_time",
             "points_scored", "total_points", "risk_score",
             "total_violations", "status", "last_active", "answers",
         ]

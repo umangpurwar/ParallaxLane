@@ -19,11 +19,16 @@ SECRET_KEY = config('SECRET_KEY', default=_INSECURE_SECRET_DEFAULT)
 DEBUG = config('DEBUG', default=False, cast=bool)
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
 
+ORGANISATION_CREATION_ENABLED = config(
+    "ORGANISATION_CREATION_ENABLED", default=True, cast=bool
+)
+
 INSTALLED_APPS = [
     'admin_panel',
     'accounts',
     'exams',
     'monitoring',
+    'attempt_events',
     'organisations',
     'rest_framework',
     'corsheaders',
@@ -82,6 +87,22 @@ DATABASES = {
         'CONN_MAX_AGE': config('DB_CONN_MAX_AGE', default=600, cast=int),  # 10 minutes
     }
 }
+
+if not DEBUG and not TESTING:
+    _required_database_environment = {
+        "DB_NAME": config("DB_NAME", default=None),
+        "DB_USER": config("DB_USER", default=None),
+        "DB_PASSWORD": config("DB_PASSWORD", default=None),
+        "DB_HOST": config("DB_HOST", default=None),
+    }
+    _missing_database_environment = [
+        name for name, value in _required_database_environment.items() if not value
+    ]
+    if _missing_database_environment:
+        raise ImproperlyConfigured(
+            "Missing required production database settings: "
+            + ", ".join(_missing_database_environment)
+        )
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
@@ -194,18 +215,6 @@ if CACHES["default"]["BACKEND"] == "django.core.cache.backends.locmem.LocMemCach
         "django_ratelimit.W001",
     ]
 
-_cloudinary_cloud = config("CLOUDINARY_CLOUD_NAME", default=None)
-_cloudinary_key = config("CLOUDINARY_API_KEY", default=None)
-_cloudinary_secret = config("CLOUDINARY_API_SECRET", default=None)
-
-if _cloudinary_cloud and _cloudinary_key and _cloudinary_secret:
-    import cloudinary
-    cloudinary.config(
-        cloud_name=_cloudinary_cloud,
-        api_key=_cloudinary_key,
-        api_secret=_cloudinary_secret,
-    )
-
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
@@ -217,15 +226,24 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 20,
 }
 
-EMAIL_BACKEND = config('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
-EMAIL_HOST = config('EMAIL_HOST', default='')
-EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
-EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
-EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
-EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
+EMAIL_PROVIDER = config('EMAIL_PROVIDER', default='console').strip().lower()
+BREVO_API_KEY = config('BREVO_API_KEY', default='')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='no-reply@parallaxlane.com')
+EMAIL_FROM_NAME = config('EMAIL_FROM_NAME', default='ParallaxLane')
+EMAIL_PROVIDER_TIMEOUT = config('EMAIL_PROVIDER_TIMEOUT', default=10, cast=int)
 
-GOOGLE_OAUTH_CLIENT_ID = config('GOOGLE_OAUTH_CLIENT_ID', default='')
+if EMAIL_PROVIDER not in {'console', 'brevo'}:
+    raise ImproperlyConfigured('EMAIL_PROVIDER must be either console or brevo.')
+if EMAIL_PROVIDER == 'brevo' and not BREVO_API_KEY and not TESTING:
+    raise ImproperlyConfigured(
+        'BREVO_API_KEY is required when EMAIL_PROVIDER=brevo.'
+    )
+
+EMAIL_BACKEND = (
+    'django.core.mail.backends.console.EmailBackend'
+    if EMAIL_PROVIDER == 'console'
+    else 'django.core.mail.backends.dummy.EmailBackend'
+)
 
 OTP_MAX_VERIFY_ATTEMPTS = config('OTP_MAX_VERIFY_ATTEMPTS', default=5, cast=int)
 OTP_LOCKOUT_SECONDS = config('OTP_LOCKOUT_SECONDS', default=900, cast=int)

@@ -1,5 +1,4 @@
 from django.contrib import admin
-from .models import Violation, Screenshot
+from .models import Violation
 
 admin.site.register(Violation)
-admin.site.register(Screenshot)

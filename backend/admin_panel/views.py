@@ -1,18 +1,21 @@
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from django.http import HttpResponse
+from django.db import transaction
 from collections import defaultdict
-from django.db.models import Prefetch
 from exams.models import Exam, ExamAttempt, Question
-from monitoring.models import Screenshot, Violation
+from monitoring.models import Violation
 from django_ratelimit.decorators import ratelimit
 from django.shortcuts import get_object_or_404
 from core.permissions import IsOrgAdmin, IsOrgInvigilator
 from datetime import timedelta
 from django.utils.timezone import now
 from exams.serializers import ExamSerializer, ExamDetailSerializer
+from exams.views import _grade_saved_answers
 from django.contrib.auth import get_user_model
-from .report_export import generate_assessment_report
+from .report_export import generate_assessment_csv
+from attempt_events.models import AttemptEvent
+from attempt_events.services import record_attempt_event
 
 
 User = get_user_model()
@@ -36,26 +39,18 @@ def live_monitor(request, exam_id):
         attempt=OuterRef('pk')
     ).order_by('-timestamp')
 
-    latest_screenshot_qs = Screenshot.objects.filter(
-        attempt=OuterRef('pk')
-    ).order_by('-timestamp')
-
     attempts = (
         ExamAttempt.objects
         .filter(exam=exam)
         .select_related("user")
         .annotate(
             latest_violation_id=Subquery(latest_violation_qs.values('id')[:1]),
-            latest_screenshot_id=Subquery(latest_screenshot_qs.values('id')[:1])
         )
         .order_by("user_id", "-start_time", "-id")
     )
 
     violation_ids = [a.latest_violation_id for a in attempts if a.latest_violation_id]
-    screenshot_ids = [a.latest_screenshot_id for a in attempts if a.latest_screenshot_id]
-
     violations_map = {v.id: v for v in Violation.objects.filter(id__in=violation_ids)}
-    screenshots_map = {s.id: s for s in Screenshot.objects.filter(id__in=screenshot_ids)}
 
     seen_users = set()
     current_time = now()
@@ -66,16 +61,21 @@ def live_monitor(request, exam_id):
             continue
         seen_users.add(attempt.user_id)
 
-        is_online = (current_time - attempt.last_active) < HEARTBEAT_THRESHOLD
+        deadline_has_passed = (
+            attempt.deadline is not None and current_time >= attempt.deadline
+        )
+        is_online = (
+            attempt.status == "active"
+            and not deadline_has_passed
+            and (current_time - attempt.last_active) < HEARTBEAT_THRESHOLD
+        )
 
-        display_status = "active" if (attempt.status == 'active' and is_online) else "inactive"
+        display_status = "active" if is_online else "inactive"
         if attempt.status == 'terminated':
             display_status = 'terminated'
 
         latest_violation = violations_map.get(attempt.latest_violation_id) if attempt.latest_violation_id else None
         metadata = latest_violation.metadata if latest_violation and latest_violation.metadata else {}
-
-        latest_screenshot = screenshots_map.get(attempt.latest_screenshot_id) if attempt.latest_screenshot_id else None
 
         system_health = {
             "camera": metadata.get("camera", True),
@@ -102,11 +102,6 @@ def live_monitor(request, exam_id):
                 "timestamp": latest_violation.timestamp
             } if latest_violation else None,
 
-            "latest_screenshot": {
-                "id": latest_screenshot.id,
-                "image_url": latest_screenshot.image if latest_screenshot else None,  # ✅ FIXED
-                "timestamp": latest_screenshot.timestamp
-            } if latest_screenshot else None
         })
 
     return Response(data)
@@ -142,31 +137,8 @@ def _user_detail_response(request, username, exam_id=None):
     for v in violations:
         breakdown[v.violation_type] = breakdown.get(v.violation_type, 0) + 1
 
-    screenshots = Screenshot.objects.filter(
-        attempt__user__username=username,
-        attempt__exam__organisation=org
-    )
-
-    if exam_id:
-        screenshots = screenshots.filter(attempt__exam_id=exam_id)
-
-    screenshots = screenshots.order_by("-timestamp")[:10]
-
-    screenshot_items = [
-        {
-            "id": s.id,
-            "image_url": s.image,  # ✅ FIXED
-            "timestamp": s.timestamp,
-            "violation_type": None,
-            "ml_face_detected": None,
-            "ml_multiple_faces": None
-        }
-        for s in screenshots
-    ]
-
     return Response({
         "breakdown": breakdown,
-        "screenshots": screenshot_items,
     })
 
 
@@ -231,16 +203,39 @@ def toggle_exam(request, exam_id):
 
     org = request.user.current_organisation
 
-    exam = get_object_or_404(Exam, id=exam_id, organisation=org)
+    with transaction.atomic():
+        exam = get_object_or_404(
+            Exam.objects.select_for_update(), id=exam_id, organisation=org
+        )
 
-    exam.is_active = not exam.is_active
-    exam.save()
+        exam.is_active = not exam.is_active
+        exam.save(update_fields=["is_active"])
 
-    if not exam.is_active:
-        ExamAttempt.objects.filter(
-            exam=exam,
-            status="active"
-        ).update(status="terminated")
+        if not exam.is_active:
+            questions = list(exam.questions.prefetch_related("options").all())
+            active_attempts = ExamAttempt.objects.select_for_update().filter(
+                exam=exam, status="active"
+            )
+            for attempt in active_attempts:
+                score, total_points = _grade_saved_answers(attempt, exam, questions)
+                ended_at = now()
+                attempt.points_scored = score
+                attempt.total_points = total_points
+                attempt.status = "terminated"
+                attempt.end_time = ended_at
+                attempt.save(
+                    update_fields=[
+                        "points_scored",
+                        "total_points",
+                        "status",
+                        "end_time",
+                    ]
+                )
+                record_attempt_event(
+                    attempt,
+                    AttemptEvent.EventType.EXAM_TERMINATED,
+                    metadata={"reason": "exam_deactivated"},
+                )
 
     return Response({"status": "toggled"})
 
@@ -306,8 +301,16 @@ def delete_exam(request, exam_id):
 
     org = request.user.current_organisation
 
-    exam = get_object_or_404(Exam, id=exam_id, organisation=org)
-    exam.delete()
+    with transaction.atomic():
+        exam = get_object_or_404(
+            Exam.objects.select_for_update(), id=exam_id, organisation=org
+        )
+        if ExamAttempt.objects.filter(exam=exam).exists():
+            return Response(
+                {"error": "Cannot delete an exam that has attempt history."},
+                status=400,
+            )
+        exam.delete()
 
     return Response({"status": "deleted"})
 
@@ -354,13 +357,11 @@ def exam_export_report(request, exam_id):
     org = request.user.current_organisation
     exam = get_object_or_404(Exam, id=exam_id, organisation=org)
 
-    workbook = generate_assessment_report(exam)
-
     response = HttpResponse(
-        workbook.getvalue(),
-        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        generate_assessment_csv(exam),
+        content_type="text/csv; charset=utf-8",
     )
-    response["Content-Disposition"] = 'attachment; filename="ParallaxLane_Assessment_Report.xlsx"'
+    response["Content-Disposition"] = 'attachment; filename="ParallaxLane_Assessment_Report.csv"'
     return response
 
 
@@ -373,7 +374,7 @@ def exam_results(request, exam_id):
     attempts = ExamAttempt.objects.filter(
         exam_id=exam_id,
         exam__organisation=org
-    ).select_related('user')
+    ).select_related('user').order_by('user__username', 'start_time', 'id')
 
     user_data = defaultdict(list)
 

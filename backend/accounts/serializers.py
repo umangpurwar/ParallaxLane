@@ -1,5 +1,8 @@
 from rest_framework import serializers
 from django.contrib.auth import authenticate, get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
+from core.validators import normalize_email
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 from organisations.utils import sync_user_organisation_context
@@ -15,8 +18,16 @@ class RegisterSerializer(serializers.ModelSerializer):
         fields = ["id", "email", "password", "name"]
 
     def validate_email(self, value):
-        if User.objects.filter(email=value).exists():
+        value = normalize_email(value)
+        if User.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError("Email already registered")
+        return value
+
+    def validate_password(self, value):
+        try:
+            validate_password(value)
+        except ValidationError as exc:
+            raise serializers.ValidationError(exc.messages)
         return value
 
     def create(self, validated_data):
@@ -34,6 +45,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         # Set additional fields
         user.name = name
         user.role = "candidate"
+        user.is_active = False
         user.save()
 
         return user
@@ -48,6 +60,10 @@ class CustomTokenSerializer(TokenObtainPairSerializer):
 
         if not email or not password:
             raise serializers.ValidationError("Email and password required")
+
+        user = User.objects.filter(email__iexact=email).first()
+        if user and not user.is_active:
+            raise serializers.ValidationError("Account is inactive")
 
         # Authenticate using Django auth system
         user = authenticate(email=email, password=password)

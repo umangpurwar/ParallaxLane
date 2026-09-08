@@ -5,33 +5,61 @@ from rest_framework.decorators import api_view, permission_classes
 from django_ratelimit.decorators import ratelimit
 from django.utils.decorators import method_decorator
 from django.db.models import F
-import logging
+from django.db import transaction
 
 from core.permissions import IsOrgMember
 from core.validators import parse_attempt_id
-from .models import Violation, Screenshot
+from .models import Violation
 from exams.models import ExamAttempt
-
-logger = logging.getLogger(__name__)
+from attempt_events.models import AttemptEvent
+from attempt_events.services import record_attempt_event
 
 VIOLATION_SEVERITY_MAP = {
     "tab_switch": 3,
-    "multiple_faces": 8,
-    "no_face": 6,
-    "phone_detected": 9,
     "window_blur": 4,
     "copy_paste": 5,
-    "suspicious_movement": 2,
 }
-
-CLOUDINARY_UPLOAD_TIMEOUT = 15
-
 
 def _resolve_attempt_id(request):
     try:
         return parse_attempt_id(request.data.get("attempt_id")), None
     except ValueError as exc:
         return None, str(exc)
+
+
+def _resolve_active_attempt(request, attempt_id):
+    """Resolve an owned, current-organisation attempt using server time."""
+    org = request.user.current_organisation
+    try:
+        attempt = ExamAttempt.objects.select_for_update().select_related("exam").get(
+            id=attempt_id,
+            user=request.user,
+            exam__organisation=org,
+        )
+    except ExamAttempt.DoesNotExist:
+        return None, Response({"error": "Invalid attempt"}, status=400)
+
+    if attempt.status != "active":
+        return None, Response({"error": "Exam already ended"}, status=400)
+
+    current_time = now()
+    if attempt.is_expired(current_time):
+        attempt.status = "terminated"
+        attempt.end_time = current_time
+        attempt.save(update_fields=["status", "end_time"])
+        record_attempt_event(
+            attempt,
+            AttemptEvent.EventType.EXAM_TERMINATED,
+            metadata={"reason": "deadline_expired"},
+        )
+        return None, Response(
+            {"error": "Exam attempt has expired", "deadline": attempt.deadline},
+            status=400,
+        )
+
+    if not attempt.exam.is_active:
+        return None, Response({"error": "Exam is disabled"}, status=403)
+    return attempt, None
 
 
 class LogViolationView(APIView):
@@ -54,30 +82,32 @@ class LogViolationView(APIView):
             return Response({"error": "metadata must be an object"}, status=400)
 
         severity = min(VIOLATION_SEVERITY_MAP.get(violation_type, 1), 10)
-        org = request.user.current_organisation
+        with transaction.atomic():
+            attempt, error = _resolve_active_attempt(request, attempt_id)
+            if error:
+                return error
 
-        try:
-            attempt = ExamAttempt.objects.get(id=attempt_id, user=request.user, exam__organisation=org)
-        except ExamAttempt.DoesNotExist:
-            return Response({"error": "Invalid attempt"}, status=400)
+            Violation.objects.create(attempt=attempt, violation_type=violation_type, severity=severity, metadata=metadata or {})
 
-        if attempt.status != "active":
-            return Response({"error": "Exam already ended"}, status=400)
+            ExamAttempt.objects.filter(id=attempt.id).update(
+                total_violations=F('total_violations') + 1,
+                risk_score=F('risk_score') + severity
+            )
 
-        Violation.objects.create(attempt=attempt, violation_type=violation_type, severity=severity, metadata=metadata or {})
-
-        ExamAttempt.objects.filter(id=attempt.id).update(
-            total_violations=F('total_violations') + 1,
-            risk_score=F('risk_score') + severity
-        )
-
-        attempt.refresh_from_db()
-        exam = attempt.exam
-
-        if exam.auto_submit_on_violation and attempt.total_violations >= exam.violation_limit:
-            attempt.status = "terminated"
-            attempt.end_time = now()
-            attempt.save()
+            attempt.refresh_from_db()
+            exam = attempt.exam
+            if exam.auto_submit_on_violation and attempt.total_violations >= exam.violation_limit:
+                attempt.status = "terminated"
+                attempt.end_time = now()
+                attempt.save()
+                record_attempt_event(
+                    attempt,
+                    AttemptEvent.EventType.EXAM_TERMINATED,
+                    metadata={
+                        "reason": "violation_threshold",
+                        "total_violations": attempt.total_violations,
+                    },
+                )
 
         return Response({
             "status": "logged",
@@ -85,59 +115,6 @@ class LogViolationView(APIView):
             "risk": attempt.risk_score,
             "state": attempt.status
         })
-
-
-class ScreenshotUploadView(APIView):
-    permission_classes = [IsOrgMember]
-
-    @method_decorator(ratelimit(key='user', rate='2/m', method='POST', block=True))
-    def post(self, request):
-        attempt_id, err = _resolve_attempt_id(request)
-        if err:
-            return Response({"error": err}, status=400)
-
-        image_file = request.FILES.get("image")
-
-        if not image_file:
-            return Response({"error": "image file is required"}, status=400)
-
-        allowed_types = {"image/jpeg", "image/png", "image/webp"}
-        if image_file.content_type not in allowed_types:
-            return Response({"error": "Invalid image type. Use JPEG, PNG, or WebP."}, status=400)
-
-        max_size = 5 * 1024 * 1024
-        if image_file.size > max_size:
-            return Response({"error": "Image too large (max 5 MB)."}, status=400)
-
-        org = request.user.current_organisation
-
-        try:
-            attempt = ExamAttempt.objects.get(id=attempt_id, user=request.user, exam__organisation=org)
-        except ExamAttempt.DoesNotExist:
-            return Response({"error": "Invalid attempt"}, status=400)
-
-        if attempt.status != "active":
-            return Response({"error": "Exam already ended"}, status=400)
-
-        try:
-            import cloudinary.uploader
-            upload_result = cloudinary.uploader.upload(
-                image_file,
-                folder="screenshots",
-                timeout=CLOUDINARY_UPLOAD_TIMEOUT,
-            )
-            image_url = upload_result.get("secure_url")
-            if not image_url:
-                raise ValueError("Cloudinary returned no URL")
-        except Exception as e:
-            logger.error("Screenshot upload failed for attempt %s: %s", attempt_id, e)
-            return Response(
-                {"error": "Screenshot upload temporarily unavailable", "status": "skipped"},
-                status=202,
-            )
-
-        Screenshot.objects.create(attempt=attempt, image=image_url)
-        return Response({"status": "saved", "url": image_url})
 
 
 @ratelimit(key='user', rate='30/m', method='POST', block=True)
@@ -148,12 +125,11 @@ def student_heartbeat(request):
     if err:
         return Response({"error": err}, status=400)
 
-    org = request.user.current_organisation
-    updated = ExamAttempt.objects.filter(
-        id=attempt_id, user=request.user, exam__organisation=org
-    ).update(last_active=now())
-
-    if not updated:
-        return Response({"error": "Invalid attempt"}, status=400)
+    with transaction.atomic():
+        attempt, error = _resolve_active_attempt(request, attempt_id)
+        if error:
+            return error
+        attempt.last_active = now()
+        attempt.save(update_fields=["last_active"])
 
     return Response({"status": "alive"})

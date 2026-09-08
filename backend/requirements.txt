@@ -10,10 +10,7 @@ django-ratelimit
 python-decouple
 python-dotenv
 whitenoise
-cloudinary
 gunicorn
 
 pillow
 requests
-openpyxl==3.1.5
-google-auth==2.38.0

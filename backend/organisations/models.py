@@ -1,5 +1,17 @@
 from django.db import models
 from django.conf import settings
+import secrets
+import string
+from django.utils.timezone import now
+
+
+def generate_join_code():
+    """Generate a unique, human-readable join code (6 characters, uppercase alphanumeric)."""
+    alphabet = string.ascii_uppercase + string.digits
+    while True:
+        code = ''.join(secrets.choice(alphabet) for _ in range(6))
+        if not Organisation.objects.filter(join_code=code).exists():
+            return code
 
 
 class Organisation(models.Model):
@@ -13,31 +25,6 @@ class Organisation(models.Model):
         (PLAN_PRO, "Pro"),
         (PLAN_ENTERPRISE, "Enterprise"),
     ]
-
-    # Default plan limits
-    PLAN_LIMITS = {
-        PLAN_FREE: {
-            "max_exams": 3,
-            "max_candidates": 30,
-            "max_admins": 2,
-            "max_invigilators": 5,
-            "proctoring_enabled": False,
-        },
-        PLAN_PRO: {
-            "max_exams": 20,
-            "max_candidates": 200,
-            "max_admins": 5,
-            "max_invigilators": 20,
-            "proctoring_enabled": True,
-        },
-        PLAN_ENTERPRISE: {
-            "max_exams": 1000,
-            "max_candidates": 10000,
-            "max_admins": 100,
-            "max_invigilators": 200,
-            "proctoring_enabled": True,
-        },
-    }
 
     name = models.CharField(max_length=200)
     slug = models.SlugField(unique=True)
@@ -64,13 +51,37 @@ class Organisation(models.Model):
 
     max_admins = models.IntegerField(default=2)
     max_invigilators = models.IntegerField(default=5)
+    
+    # Join Code Fields
+    join_code = models.CharField(max_length=6, unique=True, db_index=True, null=True, blank=True)
+    join_code_enabled = models.BooleanField(default=False)
+    join_code_valid_from = models.DateTimeField(null=True, blank=True, default=now)
+    join_code_valid_until = models.DateTimeField(null=True, blank=True)
 
-    def update_plan_limits(self):
-        """Update plan limits based on current plan."""
-        limits = self.PLAN_LIMITS.get(self.plan, self.PLAN_LIMITS[self.PLAN_FREE])
-        for key, value in limits.items():
-            setattr(self, key, value)
-        self.save(update_fields=list(limits.keys()))
+    def save(self, *args, **kwargs):
+        if not self.join_code:
+            self.join_code = generate_join_code()
+        super().save(*args, **kwargs)
+
+    def regenerate_join_code(self):
+        """Generate a new unique join code for this organisation."""
+        self.join_code = generate_join_code()
+        self.save(update_fields=["join_code"])
+    
+    def is_join_code_valid(self):
+        """Check if the join code is enabled and within valid time window."""
+        if not self.join_code_enabled:
+            return False
+        
+        current_time = now()
+        
+        if self.join_code_valid_from and current_time < self.join_code_valid_from:
+            return False
+        
+        if self.join_code_valid_until and current_time > self.join_code_valid_until:
+            return False
+        
+        return True
 
     def __str__(self):
         return f"{self.name} ({self.plan})"
@@ -106,6 +117,7 @@ class OrganisationMember(models.Model):
 
     joined_at = models.DateTimeField(auto_now_add=True)
     is_active = models.BooleanField(default=True)
+    is_exam_enabled = models.BooleanField(default=True)
 
     class Meta:
         unique_together = ('organisation', 'user')
@@ -139,33 +151,3 @@ class OrganisationInvite(models.Model):
 
     def __str__(self):
         return f"{self.email} -> {self.organisation}"
-
-
-class Coupon(models.Model):
-    PLAN_CHOICES = Organisation.PLAN_CHOICES
-
-    code = models.CharField(max_length=50, unique=True)
-    plan = models.CharField(max_length=20, choices=PLAN_CHOICES)
-    active = models.BooleanField(default=True)
-    max_uses = models.PositiveIntegerField(default=100)
-    used_count = models.PositiveIntegerField(default=0)
-    expires_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ["-created_at"]
-
-    def __str__(self):
-        return f"{self.code} → {self.plan}"
-
-    @property
-    def is_expired(self):
-        from django.utils.timezone import now
-        return self.expires_at is not None and now() > self.expires_at
-
-    @property
-    def is_exhausted(self):
-        return self.used_count >= self.max_uses
-
-    def is_redeemable(self):
-        return self.active and not self.is_expired and not self.is_exhausted

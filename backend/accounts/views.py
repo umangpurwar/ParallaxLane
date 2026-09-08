@@ -7,27 +7,32 @@ from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
 from django.http import JsonResponse
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from django.core.mail import send_mail
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 from datetime import timedelta
 from django.utils.timezone import now
-import secrets
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.contrib.auth import get_user_model
-from rest_framework import status
-from django.conf import settings
+from django.db import transaction
+from django.db import connection
+from django.db.utils import DatabaseError
+from django.views.decorators.http import require_GET
 from organisations.utils import sync_user_organisation_context
-from .google_auth import verify_google_id_token
 from .otp_security import check_verify_allowed, record_failed_verify, clear_verify_attempts
 from .ratelimit_keys import post_email_key
 from core.validators import normalize_email
-import logging
-
-logger = logging.getLogger(__name__)
+from core.email_service import EmailDeliveryError
+from .otp_service import issue_otp
 User = get_user_model()
+
+
+def _revoke_refresh_tokens(user):
+    """Blacklist every outstanding refresh token for a user."""
+    for token in OutstandingToken.objects.filter(user=user):
+        BlacklistedToken.objects.get_or_create(token=token)
 
 
 class RegisterView(generics.CreateAPIView):
@@ -37,7 +42,22 @@ class RegisterView(generics.CreateAPIView):
 
     @method_decorator(ratelimit(key='ip', rate='3/m', method='POST', block=True))
     def post(self, request, *args, **kwargs):
-        return super().post(request, *args, **kwargs)
+        response = super().post(request, *args, **kwargs)
+        if response.status_code != 201:
+            return response
+
+        try:
+            issue_otp(
+                email=response.data["email"],
+                purpose="account_verification",
+            )
+        except EmailDeliveryError:
+            User.objects.filter(pk=response.data["id"]).delete()
+            return Response(
+                {"error": "Failed to send verification email. Please try again."},
+                status=503,
+            )
+        return response
 
 
 class CustomLoginView(TokenObtainPairView):
@@ -49,8 +69,19 @@ class CustomLoginView(TokenObtainPairView):
         return super().post(request, *args, **kwargs)
 
 
+@require_GET
 def health_check(request):
-    return JsonResponse({"status": "ok"})
+    try:
+        connection.ensure_connection()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+    except DatabaseError:
+        return JsonResponse(
+            {"status": "unhealthy", "database": "unavailable"},
+            status=503,
+        )
+
+    return JsonResponse({"status": "ok", "database": "ok"})
 
 
 class SendOTPView(APIView):
@@ -73,38 +104,22 @@ class SendOTPView(APIView):
         if mode not in ["login", "register", "forgot"]:
             return Response({"error": "Invalid mode"}, status=400)
 
-        user_exists = User.objects.filter(email=email).exists()
-
-        if mode == "login" and not user_exists:
-            return Response({"error": "User not registered"}, status=400)
-        if mode == "register" and user_exists:
-            return Response({"error": "User already exists"}, status=400)
-        if mode == "forgot" and not user_exists:
-            return Response({"error": "User not registered"}, status=400)
-
-        EmailOTP.objects.filter(email=email).delete()
-        otp = str(secrets.randbelow(900000) + 100000)  # 6-digit OTP, cryptographically secure
-        otp_record = EmailOTP(email=email)
-        otp_record.set_otp(otp)
-        otp_record.save()
+        user = User.objects.filter(email__iexact=email).first()
+        if mode == "register" and user and user.is_active:
+            return Response({"status": "If eligible, an OTP was sent"})
+        if mode in ["login", "forgot"] and (not user or not user.is_active):
+            return Response({"status": "If eligible, an OTP was sent"})
 
         try:
-            send_mail(
-                "Your ParallaxLane OTP",
-                f"Your OTP is {otp}. It expires in 5 minutes.",
-                settings.DEFAULT_FROM_EMAIL,
-                [email],
-                fail_silently=False,
+            issue_otp(
+                email=email,
+                purpose="password_reset" if mode == "forgot" else "account_verification",
             )
-        except Exception as e:
-            logger.error("Failed to send OTP to %s: %s", email, e)
-            if settings.DEBUG:
-                logger.warning("DEBUG mode: OTP email delivery failed for %s", email)
-            else:
-                return Response({"error": "Failed to send OTP. Please try again."}, status=500)
+        except EmailDeliveryError:
+            return Response({"error": "Failed to send OTP. Please try again."}, status=503)
 
         # OTP is never returned in API responses (see C-004).
-        return Response({"status": "OTP sent"})
+        return Response({"status": "If eligible, an OTP was sent"})
 
 
 class VerifyOTPView(APIView):
@@ -129,7 +144,7 @@ class VerifyOTPView(APIView):
         if not user:
             return Response({"error": "User not registered"}, status=400)
 
-        records = EmailOTP.objects.filter(email=email).order_by("-created_at")
+        records = EmailOTP.objects.filter(email=email).order_by("-created_at")[:5]
         record = None
         for r in records:
             if r.check_otp(otp):
@@ -143,6 +158,9 @@ class VerifyOTPView(APIView):
             record.delete()
             record_failed_verify(email)
             return Response({"error": "OTP expired"}, status=400)
+
+        if not user.is_active:
+            return Response({"error": "Account is inactive"}, status=403)
 
         refresh = RefreshToken.for_user(user)
         record.delete()
@@ -182,7 +200,7 @@ class VerifyOTPRegisterView(APIView):
         if not allowed:
             return Response({"error": message}, status=429)
 
-        records = EmailOTP.objects.filter(email=email).order_by("-created_at")
+        records = EmailOTP.objects.filter(email=email).order_by("-created_at")[:5]
         record = None
         for r in records:
             if r.check_otp(otp):
@@ -197,21 +215,31 @@ class VerifyOTPRegisterView(APIView):
             record_failed_verify(email)
             return Response({"error": "OTP expired"}, status=400)
 
-        if User.objects.filter(email=email).exists():
-            return Response({"error": "User already exists"}, status=400)
-
         try:
             validate_password(password)
         except ValidationError as e:
             return Response({"error": "\n".join(e.messages)}, status=400)
 
-        user = User.objects.create_user(
-            username=email,
-            email=email,
-            password=password,
-            name=name,
-            role="candidate",
-        )
+        user = User.objects.filter(email__iexact=email).first()
+        if user and user.is_active:
+            return Response({"error": "User already exists"}, status=400)
+        if user is None:
+            user = User.objects.create_user(
+                username=email,
+                email=email,
+                password=password,
+                name=name,
+                role="candidate",
+                is_active=False,
+            )
+        else:
+            user.set_password(password)
+            user.name = name
+            user.is_active = False
+            user.save(update_fields=["password", "name", "is_active"])
+
+        user.is_active = True
+        user.save(update_fields=["is_active"])
         record.delete()
         clear_verify_attempts(email)
 
@@ -254,7 +282,7 @@ class VerifyOTPForgotView(APIView):
         if not user:
             return Response({"error": "User not registered"}, status=400)
 
-        records = EmailOTP.objects.filter(email=email).order_by("-created_at")
+        records = EmailOTP.objects.filter(email=email).order_by("-created_at")[:5]
         record = None
         for r in records:
             if r.check_otp(otp):
@@ -269,102 +297,22 @@ class VerifyOTPForgotView(APIView):
             record_failed_verify(email)
             return Response({"error": "OTP expired"}, status=400)
 
+        if not user.is_active:
+            return Response({"error": "Account is inactive"}, status=403)
+
         try:
             validate_password(new_password, user)
         except ValidationError as e:
             return Response({"error": "\n".join(e.messages)}, status=400)
-        user.set_password(new_password)
-        user.save()
-        record.delete()
+
+        with transaction.atomic():
+            user.set_password(new_password)
+            user.save(update_fields=["password"])
+            record.delete()
+            _revoke_refresh_tokens(user)
         clear_verify_attempts(email)
 
         return Response({"message": "Password reset successful"})
-
-
-class GoogleAuthView(APIView):
-    permission_classes = [AllowAny]
-
-    @method_decorator(ratelimit(key='ip', rate='10/m', method='POST', block=True))
-    def post(self, request):
-        token = request.data.get("token")
-
-        if not token:
-            return Response({"error": "Token required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not getattr(settings, "GOOGLE_OAUTH_CLIENT_ID", ""):
-            return Response(
-                {"error": "Google OAuth is not configured on the server"},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
-        try:
-            data = verify_google_id_token(token)
-        except ValueError as e:
-            logger.warning("Google token validation failed: %s", e)
-            message = str(e)
-            if "not configured" in message.lower():
-                return Response(
-                    {"error": message},
-                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
-                )
-            if "too early" in message.lower() or "expired" in message.lower():
-                return Response(
-                    {"error": "Google token expired or clock skew detected. Try again."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if "email is not verified" in message.lower():
-                return Response(
-                    {"error": "Google account email is not verified."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            return Response({"error": "Invalid Google token"}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            logger.error("Google token verification error: %s", e)
-            err = str(e).lower()
-            if "audience" in err or "recipient" in err:
-                return Response(
-                    {"error": "Google OAuth client ID mismatch between frontend and backend."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            return Response(
-                {"error": "Could not verify Google token"},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
-        email = data.get("email")
-        full_name = data.get("name")
-        given_name = data.get("given_name")
-        picture = data.get("picture")
-
-        display_name = given_name or full_name or ""
-
-        user, created = User.objects.get_or_create(
-            email=email,
-            defaults={"username": email, "role": "candidate", "name": display_name}
-        )
-
-        if not user.name and display_name:
-            user.name = display_name
-            user.save()
-
-        refresh = RefreshToken.for_user(user)
-
-        org_data = sync_user_organisation_context(user)
-        response_data = {
-            "access": str(refresh.access_token),
-            "refresh": str(refresh),
-            "email": user.email,
-            "display_name": user.name.split(" ")[0] if user.name else user.email.split("@")[0],
-            "picture": picture,
-            "org_slug": org_data.get("org_slug"),
-            "org_name": org_data.get("org_name"),
-            "org_plan": org_data.get("org_plan"),
-            "org_role": org_data.get("org_role"),
-        }
-        if not org_data:
-            response_data["no_org"] = True
-
-        return Response(response_data, status=status.HTTP_200_OK)
 
 
 class LogoutView(APIView):
@@ -375,7 +323,9 @@ class LogoutView(APIView):
         if refresh_token:
             try:
                 token = RefreshToken(refresh_token)
+                if str(token.get("user_id")) != str(request.user.pk):
+                    return Response({"error": "Refresh token does not belong to this user"}, status=403)
                 token.blacklist()
             except Exception:
-                logger.warning("Failed to blacklist refresh token on logout")
+                return Response({"error": "Invalid refresh token"}, status=400)
         return Response({"status": "logged out"})

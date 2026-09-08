@@ -34,6 +34,8 @@ urlpatterns = [
 
     path("api/admin/", include("admin_panel.urls")),
 
+    path("api/master-admin/", include("admin_panel.master_admin_urls")),
+
     path("api/login/", CustomLoginView.as_view()),
 
     path('api/organisations/', include('organisations.urls')),

@@ -10,3 +10,6 @@ db.sqlite3
 dist/
 staticfiles/
 media/
+# Backend test suite
+backend/**/tests.py
+backend/**/tests/*.py

@@ -22,17 +22,3 @@ class Violation(models.Model):
 
     def __str__(self):
         return f"{self.violation_type} - {self.timestamp}"
-
-
-class Screenshot(models.Model):
-    attempt = models.ForeignKey(ExamAttempt, on_delete=models.CASCADE, db_index=True)
-
-    image = models.URLField()
-    timestamp = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        indexes = [
-            models.Index(fields=["-timestamp"], name="screenshot_timestamp_desc_idx"),
-        ]
-
-    flagged = models.BooleanField(default=False)

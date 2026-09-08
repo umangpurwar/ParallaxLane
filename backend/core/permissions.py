@@ -12,6 +12,8 @@ def get_membership(user):
     if not org:
         return None
 
+    if not org.is_active:
+        return None
     return org.members.filter(user=user, is_active=True).first()
 
 
@@ -45,7 +47,18 @@ class IsOrgInvigilator(BasePermission):
 
 
 class IsSuperAdmin(BasePermission):
-    """Platform-level admin (Django staff)"""
+    """Backward-compatible alias for the platform-level permission."""
 
     def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and request.user.is_staff)
+        return bool(request.user and request.user.is_authenticated and request.user.is_superuser)
+
+
+class IsMasterAdmin(BasePermission):
+    """Deployment-wide administrator; organisation roles are insufficient."""
+
+    def has_permission(self, request, view):
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and request.user.is_superuser
+        )
