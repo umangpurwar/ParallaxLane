@@ -44,6 +44,12 @@ def parse_attempt_id(value):
     return parsed
 
 
+import re
+
+# The name is placed into invitation emails: no URLs, newlines or markup.
+_ORG_NAME_RE = re.compile(r"^[\w &(),'-]+$")
+
+
 def validate_org_name(value):
     """Validate organisation name length."""
     if not value or not isinstance(value, str):
@@ -51,6 +57,8 @@ def validate_org_name(value):
     name = value.strip()
     if not name:
         raise ValueError("Organisation name is required")
-    if len(name) > 200:
-        raise ValueError("Organisation name must be 200 characters or fewer")
+    if len(name) > 60:
+        raise ValueError("Organisation name must be 60 characters or fewer")
+    if not _ORG_NAME_RE.match(name):
+        raise ValueError("Organisation name may contain letters, digits, spaces and & ( ) , - ' only")
     return name

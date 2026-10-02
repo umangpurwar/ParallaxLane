@@ -48,6 +48,7 @@ MIDDLEWARE = [
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django_ratelimit.middleware.RatelimitMiddleware',
+    'core.middleware.MinimumAppVersionMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -118,7 +119,10 @@ USE_TZ = True
 
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+}
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
@@ -149,6 +153,12 @@ REDIS_REQUIRED = config("REDIS_REQUIRED", default=not DEBUG, cast=bool)
 # For django_ratelimit
 RATELIMIT_VIEW = "core.views.ratelimit_error"  # Dummy view name (doesn't need to exist)
 RATELIMIT_ENABLE = config("RATELIMIT_ENABLE", default=True, cast=bool)
+# Availability during an exam beats a short window of unthrottled requests:
+# when the cache is unreachable, let requests through instead of blocking all.
+RATELIMIT_FAIL_OPEN = config("RATELIMIT_FAIL_OPEN", default=True, cast=bool)
+# Client IP for per-IP limits (see core/ratelimit.py).
+RATELIMIT_IP_META_KEY = "core.ratelimit.client_ip"
+TRUST_PROXY_IP_HEADER = config("TRUST_PROXY_IP_HEADER", default=False, cast=bool)
 
 _LOC_MEM_CACHES = {
     "default": {
@@ -200,7 +210,13 @@ def _configure_caches():
             "OPTIONS": {
                 "CLIENT_CLASS": "django_redis.client.DefaultClient",
                 "IGNORE_EXCEPTIONS": True,
-                "CONNECTION_POOL_KWARGS": {"ssl_cert_reqs": None},
+                # ssl_cert_reqs is only valid for TLS (rediss://) connections;
+                # passing it on redis:// raises TypeError on every cache call.
+                "CONNECTION_POOL_KWARGS": (
+                    {"ssl_cert_reqs": config("REDIS_SSL_CERT_REQS", default="required")}
+                    if REDIS_URL.startswith("rediss://")
+                    else {}
+                ),
             },
         }
     }
@@ -224,7 +240,30 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
+    "EXCEPTION_HANDLER": "core.exceptions.api_exception_handler",
 }
+
+# JSON API only (no file uploads are accepted): cap request bodies.
+DATA_UPLOAD_MAX_MEMORY_SIZE = config("DATA_UPLOAD_MAX_MEMORY_SIZE", default=256 * 1024, cast=int)
+
+# -----------------------------------------------------------------------------
+# Exam client hardening (Android)
+# -----------------------------------------------------------------------------
+# Candidate exam endpoints require a registered, approved device.
+DEVICE_REQUIRED_FOR_EXAMS = config("DEVICE_REQUIRED_FOR_EXAMS", default=True, cast=bool)
+# Require a passing Play Integrity verdict at exam start.
+INTEGRITY_REQUIRED = config("INTEGRITY_REQUIRED", default=False, cast=bool)
+PLAY_INTEGRITY_PACKAGE = config("PLAY_INTEGRITY_PACKAGE", default="")
+GOOGLE_SERVICE_ACCOUNT_FILE = config("GOOGLE_SERVICE_ACCOUNT_FILE", default="")
+# Requests carrying X-Client: android with an older X-App-Version get 426.
+MIN_ANDROID_APP_VERSION = config("MIN_ANDROID_APP_VERSION", default=1, cast=int)
+# Server-side heartbeat gap that counts as a (soft) violation.
+HEARTBEAT_GAP_SECONDS = config("HEARTBEAT_GAP_SECONDS", default=25, cast=int)
+# Network grace for a final submit that arrives just after the deadline.
+SUBMIT_GRACE_SECONDS = config("SUBMIT_GRACE_SECONDS", default=10, cast=int)
+# Lifetime of the exam-start challenge nonce.
+START_CHALLENGE_TTL_SECONDS = config("START_CHALLENGE_TTL_SECONDS", default=120, cast=int)
+MAX_SHORT_ANSWER_LENGTH = config("MAX_SHORT_ANSWER_LENGTH", default=5000, cast=int)
 
 EMAIL_PROVIDER = config('EMAIL_PROVIDER', default='console').strip().lower()
 BREVO_API_KEY = config('BREVO_API_KEY', default='')
@@ -234,6 +273,10 @@ EMAIL_PROVIDER_TIMEOUT = config('EMAIL_PROVIDER_TIMEOUT', default=10, cast=int)
 
 if EMAIL_PROVIDER not in {'console', 'brevo'}:
     raise ImproperlyConfigured('EMAIL_PROVIDER must be either console or brevo.')
+if EMAIL_PROVIDER == 'console' and not DEBUG and not TESTING:
+    raise ImproperlyConfigured(
+        'EMAIL_PROVIDER=console would write OTPs to logs; use brevo in production.'
+    )
 if EMAIL_PROVIDER == 'brevo' and not BREVO_API_KEY and not TESTING:
     raise ImproperlyConfigured(
         'BREVO_API_KEY is required when EMAIL_PROVIDER=brevo.'

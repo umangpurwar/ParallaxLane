@@ -62,6 +62,11 @@ def sync_user_organisation_context(user):
                 continue
             if not org.is_active:
                 continue
+            # Invites sent after the account existed need explicit acceptance
+            # (organisations/join/ or organisations/invites/); auto-joining
+            # would let any org admin pull an existing user in.
+            if invite.created_at > user.date_joined:
+                continue
 
             safe_role = sanitize_stored_role(invite.role)
             member = OrganisationMember.objects.select_for_update().filter(

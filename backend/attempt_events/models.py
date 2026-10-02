@@ -15,6 +15,7 @@ class AttemptEvent(models.Model):
         NETWORK_RESTORED = "network_restored", "Network restored"
         EXAM_SUBMITTED = "exam_submitted", "Exam submitted"
         EXAM_TERMINATED = "exam_terminated", "Exam terminated"
+        VIOLATIONS_CLEARED = "violations_cleared", "Violations cleared"
 
     attempt = models.ForeignKey(
         "exams.ExamAttempt",
@@ -23,7 +24,7 @@ class AttemptEvent(models.Model):
     )
     question = models.ForeignKey(
         "exams.Question",
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="attempt_events",

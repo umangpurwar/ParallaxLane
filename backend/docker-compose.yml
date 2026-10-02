@@ -3,9 +3,9 @@ version: "3.9"
 services:
   web:
     build: .
-    command: sh -c "python manage.py migrate --noinput && gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120"
+    command: sh -c "python manage.py migrate --noinput && gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers 3 --worker-class gthread --threads 4 --timeout 60"
     volumes:
-      - .:/app
+      # Source is baked into the image; mount ".:/app" only in local dev.
       - media_data:/app/media
     ports:
       - "8000:8000"
@@ -29,8 +29,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # No published port: only the web service reaches Postgres.
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
@@ -40,8 +39,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    # No published port: Redis has no password and must stay internal.
     restart: unless-stopped
     volumes:
       - redis_data:/data

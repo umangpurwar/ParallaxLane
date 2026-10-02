@@ -61,9 +61,13 @@ class CustomTokenSerializer(TokenObtainPairSerializer):
         if not email or not password:
             raise serializers.ValidationError("Email and password required")
 
+        email = email.lower().strip()
         user = User.objects.filter(email__iexact=email).first()
         if user and not user.is_active:
-            raise serializers.ValidationError("Account is inactive")
+            # Only reveal the inactive state to someone who knows the password.
+            if user.check_password(password):
+                raise serializers.ValidationError("Account is inactive")
+            raise serializers.ValidationError("Invalid credentials")
 
         # Authenticate using Django auth system
         user = authenticate(email=email, password=password)

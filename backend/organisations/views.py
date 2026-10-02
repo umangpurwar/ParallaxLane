@@ -2,7 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
 
@@ -22,6 +22,8 @@ from datetime import timedelta
 from rest_framework import serializers
 
 User = get_user_model()
+
+DEFAULT_INVITE_EXPIRY_DAYS = 7
 
 
 def _strict_bool(value):
@@ -48,17 +50,25 @@ class CreateOrganisationView(APIView):
         except ValueError as exc:
             return Response({"error": str(exc)}, status=400)
 
-        base_slug = slugify(name)
-        slug = base_slug
-        counter = 1
-
-        while Organisation.objects.filter(slug=slug).exists():
-            slug = f"{base_slug}-{counter}"
-            counter += 1
-
-        org = Organisation.objects.create(name=name, slug=slug, owner=request.user)
-
-        OrganisationMember.objects.create(organisation=org, user=request.user, role="owner")
+        base_slug = slugify(name) or "org"
+        org = None
+        for _ in range(5):
+            slug = base_slug
+            counter = 1
+            while Organisation.objects.filter(slug=slug).exists():
+                slug = f"{base_slug}-{counter}"
+                counter += 1
+            try:
+                with transaction.atomic():
+                    org = Organisation.objects.create(name=name, slug=slug, owner=request.user)
+                    OrganisationMember.objects.create(
+                        organisation=org, user=request.user, role="owner"
+                    )
+                break
+            except IntegrityError:
+                continue  # concurrent create took the slug; retry
+        if org is None:
+            return Response({"error": "Could not allocate a unique slug, retry"}, status=409)
 
         request.user.current_organisation = org
         request.user.save()
@@ -122,6 +132,7 @@ class SwitchOrganisationView(APIView):
 class InviteMemberView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @method_decorator(ratelimit(key="user", rate="30/h", method="POST", block=True))
     def post(self, request, slug):
         try:
             with transaction.atomic():
@@ -148,7 +159,7 @@ class InviteMemberView(APIView):
                         status=400,
                     )
 
-                expires_at = None
+                expires_at = now() + timedelta(days=DEFAULT_INVITE_EXPIRY_DAYS)
                 if expiry_days:
                     try:
                         expiry_days = int(expiry_days)
@@ -193,27 +204,10 @@ class InviteMemberView(APIView):
                     token=str(uuid.uuid4()), expires_at=expires_at
                 )
 
-                if user:
-                    if member is None:
-                        member = OrganisationMember.objects.create(
-                            organisation=org, user=user, role=role
-                        )
-                    elif not member.is_active:
-                        member.role = role
-                        member.is_active = True
-                        member.save(update_fields=["role", "is_active"])
+                if member is not None and member.is_active:
                     invite.accepted = True
                     invite.save(update_fields=["accepted"])
-                    if not user.current_organisation_id:
-                        user.current_organisation = org
-                        user.save(update_fields=["current_organisation"])
-                    return Response({
-                        "status": "user added directly",
-                        "org_slug": org.slug,
-                        "org_name": org.name,
-                        "org_plan": org.plan,
-                        "org_role": member.role
-                    })
+                    return Response({"status": "already a member", "org_role": member.role})
 
                 send_invitation_email(
                     recipient=email,

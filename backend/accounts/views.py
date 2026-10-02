@@ -23,6 +23,7 @@ from django.views.decorators.http import require_GET
 from organisations.utils import sync_user_organisation_context
 from .otp_security import check_verify_allowed, record_failed_verify, clear_verify_attempts
 from .ratelimit_keys import post_email_key
+from core.ratelimit import client_ip
 from core.validators import normalize_email
 from core.email_service import EmailDeliveryError
 from .otp_service import issue_otp
@@ -40,7 +41,8 @@ class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
 
-    @method_decorator(ratelimit(key='ip', rate='3/m', method='POST', block=True))
+    @method_decorator(ratelimit(key='ip', rate='20/m', method='POST', block=True))
+    @method_decorator(ratelimit(key=post_email_key, rate='3/m', method='POST', block=True))
     def post(self, request, *args, **kwargs):
         response = super().post(request, *args, **kwargs)
         if response.status_code != 201:
@@ -64,7 +66,10 @@ class CustomLoginView(TokenObtainPairView):
     serializer_class = CustomTokenSerializer
     permission_classes = [AllowAny]
 
-    @method_decorator(ratelimit(key='ip', rate='5/m', method='POST', block=True))
+    # Per-email limit stops guessing; the generous per-IP limit only stops
+    # floods, because a whole college lab shares one NAT address.
+    @method_decorator(ratelimit(key='ip', rate='100/m', method='POST', block=True))
+    @method_decorator(ratelimit(key=post_email_key, rate='10/m', method='POST', block=True))
     def post(self, request, *args, **kwargs):
         return super().post(request, *args, **kwargs)
 
@@ -87,7 +92,7 @@ def health_check(request):
 class SendOTPView(APIView):
     permission_classes = [AllowAny]
 
-    @method_decorator(ratelimit(key='ip', rate='5/m', method='POST', block=True))
+    @method_decorator(ratelimit(key='ip', rate='30/m', method='POST', block=True))
     @method_decorator(ratelimit(key=post_email_key, rate='3/m', method='POST', block=True))
     def post(self, request):
         email = request.data.get("email")
@@ -105,7 +110,7 @@ class SendOTPView(APIView):
             return Response({"error": "Invalid mode"}, status=400)
 
         user = User.objects.filter(email__iexact=email).first()
-        if mode == "register" and user and user.is_active:
+        if mode == "register" and user and (user.is_active or user.email_verified):
             return Response({"status": "If eligible, an OTP was sent"})
         if mode in ["login", "forgot"] and (not user or not user.is_active):
             return Response({"status": "If eligible, an OTP was sent"})
@@ -125,7 +130,7 @@ class SendOTPView(APIView):
 class VerifyOTPView(APIView):
     permission_classes = [AllowAny]
 
-    @method_decorator(ratelimit(key='ip', rate='15/m', method='POST', block=True))
+    @method_decorator(ratelimit(key='ip', rate='60/m', method='POST', block=True))
     @method_decorator(ratelimit(key=post_email_key, rate='5/m', method='POST', block=True))
     def post(self, request):
         email = request.data.get("email")
@@ -142,7 +147,8 @@ class VerifyOTPView(APIView):
 
         user = User.objects.filter(email=email).first()
         if not user:
-            return Response({"error": "User not registered"}, status=400)
+            record_failed_verify(email)
+            return Response({"error": "Invalid OTP"}, status=400)
 
         records = EmailOTP.objects.filter(email=email).order_by("-created_at")[:5]
         record = None
@@ -183,7 +189,7 @@ class VerifyOTPView(APIView):
 class VerifyOTPRegisterView(APIView):
     permission_classes = [AllowAny]
 
-    @method_decorator(ratelimit(key='ip', rate='15/m', method='POST', block=True))
+    @method_decorator(ratelimit(key='ip', rate='60/m', method='POST', block=True))
     @method_decorator(ratelimit(key=post_email_key, rate='5/m', method='POST', block=True))
     def post(self, request):
         email = request.data.get("email")
@@ -221,7 +227,8 @@ class VerifyOTPRegisterView(APIView):
             return Response({"error": "\n".join(e.messages)}, status=400)
 
         user = User.objects.filter(email__iexact=email).first()
-        if user and user.is_active:
+        if user and (user.is_active or user.email_verified):
+            # email_verified + inactive = deactivated by an administrator.
             return Response({"error": "User already exists"}, status=400)
         if user is None:
             user = User.objects.create_user(
@@ -239,7 +246,8 @@ class VerifyOTPRegisterView(APIView):
             user.save(update_fields=["password", "name", "is_active"])
 
         user.is_active = True
-        user.save(update_fields=["is_active"])
+        user.email_verified = True
+        user.save(update_fields=["is_active", "email_verified"])
         record.delete()
         clear_verify_attempts(email)
 
@@ -262,7 +270,7 @@ class VerifyOTPRegisterView(APIView):
 class VerifyOTPForgotView(APIView):
     permission_classes = [AllowAny]
 
-    @method_decorator(ratelimit(key='ip', rate='15/m', method='POST', block=True))
+    @method_decorator(ratelimit(key='ip', rate='60/m', method='POST', block=True))
     @method_decorator(ratelimit(key=post_email_key, rate='5/m', method='POST', block=True))
     def post(self, request):
         email = request.data.get("email")
@@ -280,7 +288,8 @@ class VerifyOTPForgotView(APIView):
 
         user = User.objects.filter(email=email).first()
         if not user:
-            return Response({"error": "User not registered"}, status=400)
+            record_failed_verify(email)
+            return Response({"error": "Invalid OTP"}, status=400)
 
         records = EmailOTP.objects.filter(email=email).order_by("-created_at")[:5]
         record = None

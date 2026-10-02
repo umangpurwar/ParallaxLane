@@ -27,6 +27,10 @@ class CandidateQuestionSerializer(serializers.ModelSerializer):
 VALID_QUESTION_TYPES = {c[0] for c in Question.QUESTION_TYPE_CHOICES}
 
 
+MAX_POINTS = 1000
+MAX_DURATION_MINUTES = 24 * 60
+
+
 class QuestionSerializer(serializers.ModelSerializer):
     options = QuestionOptionSerializer(many=True, required=False)
 
@@ -45,12 +49,37 @@ class QuestionSerializer(serializers.ModelSerializer):
     def validate_points(self, value):
         if value < 0:
             raise serializers.ValidationError("points must be >= 0")
+        if value > MAX_POINTS:
+            raise serializers.ValidationError(f"points must be <= {MAX_POINTS}")
         return value
 
     def validate_negative_points(self, value):
         if value < 0:
             raise serializers.ValidationError("negative_points must be >= 0")
+        if value > MAX_POINTS:
+            raise serializers.ValidationError(f"negative_points must be <= {MAX_POINTS}")
         return value
+
+    def validate(self, attrs):
+        if self.partial and "options" not in attrs and "question_type" not in attrs:
+            return attrs
+        q_type = attrs.get("question_type", getattr(self.instance, "question_type", "mcq"))
+        options = attrs.get("options") or []
+        correct = sum(1 for option in options if option.get("is_correct"))
+        if q_type == "mcq" and (len(options) < 2 or correct != 1):
+            raise serializers.ValidationError(
+                "MCQ questions need at least 2 options and exactly one correct option"
+            )
+        if q_type == "true_false" and (len(options) != 2 or correct != 1):
+            raise serializers.ValidationError(
+                "True/false questions need exactly 2 options and one correct option"
+            )
+        if q_type == "short_answer" and not (
+            attrs.get("correct_text_answer")
+            or getattr(self.instance, "correct_text_answer", None)
+        ):
+            raise serializers.ValidationError("Short answer questions need correct_text_answer")
+        return attrs
 
     def create(self, validated_data):
         options_data = validated_data.pop("options", [])
@@ -87,7 +116,21 @@ class ExamSerializer(serializers.ModelSerializer):
     def validate_duration(self, value):
         if value <= 0:
             raise serializers.ValidationError("duration must be greater than 0")
+        if value > MAX_DURATION_MINUTES:
+            raise serializers.ValidationError(f"duration must be <= {MAX_DURATION_MINUTES} minutes")
         return value
+
+    def validate_violation_limit(self, value):
+        if value < 1 or value > 100:
+            raise serializers.ValidationError("violation_limit must be between 1 and 100")
+        return value
+
+    def validate(self, attrs):
+        start = attrs.get("start_time", getattr(self.instance, "start_time", None))
+        end = attrs.get("end_time", getattr(self.instance, "end_time", None))
+        if start and end and end <= start:
+            raise serializers.ValidationError({"end_time": "end_time must be after start_time"})
+        return attrs
 
     @transaction.atomic
     def create(self, validated_data):
@@ -132,13 +175,11 @@ class ExamSerializer(serializers.ModelSerializer):
         allowed_types = features.get("allowed_question_types", [])
         questions_data = validated_data.pop("questions", None)
 
-        if questions_data is not None and ExamAttempt.objects.filter(
-            exam=instance,
-            status="active",
-            answers__isnull=False,
-        ).exists():
+        # Replacing questions would orphan graded answers: lock them once
+        # anyone has started. Duplicate the exam to change questions.
+        if questions_data is not None and ExamAttempt.objects.filter(exam=instance).exists():
             raise serializers.ValidationError({
-                "error": "Cannot replace questions while an active attempt has saved answers."
+                "error": "Questions are locked once any attempt exists. Duplicate the exam to change them."
             })
 
         for attr, value in validated_data.items():

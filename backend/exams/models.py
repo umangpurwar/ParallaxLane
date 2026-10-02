@@ -123,6 +123,16 @@ class ExamAttempt(models.Model):
 
     status = models.CharField(max_length=20, default="active", db_index=True)
     last_active = models.DateTimeField(default=now)
+    # Device the attempt was started on and the last state it reported.
+    device = models.ForeignKey(
+        "accounts.UserDevice",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="attempts",
+    )
+    last_client_state = models.JSONField(default=dict, blank=True)
+    end_reason = models.CharField(max_length=40, blank=True)
 
     class Meta:
         constraints = [
@@ -165,7 +175,9 @@ class Answer(models.Model):
         related_name="answers"
     )
 
-    question = models.ForeignKey(Question, on_delete=models.CASCADE)
+    # RESTRICT: a question with answers can't be deleted on its own (answers are
+    # grading evidence), but deleting the whole exam still cascades normally.
+    question = models.ForeignKey(Question, on_delete=models.RESTRICT)
 
     # MCQ / TRUE-FALSE
     selected_option = models.ForeignKey(

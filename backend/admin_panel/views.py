@@ -11,7 +11,7 @@ from core.permissions import IsOrgAdmin, IsOrgInvigilator
 from datetime import timedelta
 from django.utils.timezone import now
 from exams.serializers import ExamSerializer, ExamDetailSerializer
-from exams.views import _grade_saved_answers
+from exams.services import REASON_ADMIN, finalize_attempt, grade_saved_answers as _grade_saved_answers
 from django.contrib.auth import get_user_model
 from .report_export import generate_assessment_csv
 from attempt_events.models import AttemptEvent
@@ -77,10 +77,14 @@ def live_monitor(request, exam_id):
         latest_violation = violations_map.get(attempt.latest_violation_id) if attempt.latest_violation_id else None
         metadata = latest_violation.metadata if latest_violation and latest_violation.metadata else {}
 
+        # From the server-validated heartbeat, not client violation metadata.
+        client_state = attempt.last_client_state or {}
         system_health = {
-            "camera": metadata.get("camera", True),
-            "tab_focus": metadata.get("tab", True),
-            "fullscreen": metadata.get("fullscreen", True)
+            "camera": True,
+            "tab_focus": client_state.get("foreground", True),
+            "fullscreen": client_state.get("lock_task", True),
+            "multi_window": client_state.get("multi_window", False),
+            "overlay_suspect": client_state.get("overlay_suspect", False),
         }
 
         user = attempt.user
@@ -94,6 +98,8 @@ def live_monitor(request, exam_id):
             "violations_count": attempt.total_violations,
             "risk_score": attempt.risk_score or 0,
             "status": display_status,
+            "end_reason": attempt.end_reason,
+            "last_active": attempt.last_active,
             "system_health": system_health,
 
             "latest_violation": {
@@ -144,9 +150,33 @@ def _user_detail_response(request, username, exam_id=None):
 
 # ---------------- CLEAR VIOLATIONS ----------------
 
-@ratelimit(key='user', rate='5/m', method='POST', block=True)
+def _clear_violations(admin_user, attempts):
+    """Clear violations but keep an audit record of who cleared what."""
+    with transaction.atomic():
+        for attempt in attempts.select_for_update():
+            cleared = Violation.objects.filter(attempt=attempt)
+            count = cleared.count()
+            if not count:
+                continue
+            record_attempt_event(
+                attempt,
+                AttemptEvent.EventType.VIOLATIONS_CLEARED,
+                metadata={
+                    "cleared_by": admin_user.id,
+                    "violations": count,
+                    "total_violations_before": attempt.total_violations,
+                    "risk_score_before": attempt.risk_score,
+                },
+            )
+            cleared.delete()
+            attempt.total_violations = 0
+            attempt.risk_score = 0
+            attempt.save(update_fields=["total_violations", "risk_score"])
+
+
 @api_view(['DELETE', 'POST'])
 @permission_classes([IsOrgAdmin])
+@ratelimit(key='user', rate='20/m', method=['POST', 'DELETE'], block=True)
 def clear_violations(request, username):
 
     org = request.user.current_organisation
@@ -156,16 +186,13 @@ def clear_violations(request, username):
         exam__organisation=org
     )
 
-    Violation.objects.filter(attempt__in=attempts).delete()
-    attempts.update(total_violations=0, risk_score=0)
-
+    _clear_violations(request.user, attempts)
     return Response({"status": "cleared"})
 
 
-@ratelimit(key='user', rate='5/m', method='POST', block=True)
-@ratelimit(key='user', rate='5/m', method='DELETE', block=True)
 @api_view(['DELETE', 'POST'])
 @permission_classes([IsOrgAdmin])
+@ratelimit(key='user', rate='20/m', method=['POST', 'DELETE'], block=True)
 def clear_violations_exam(request, exam_id, username):
 
     org = request.user.current_organisation
@@ -176,9 +203,7 @@ def clear_violations_exam(request, exam_id, username):
         exam__organisation=org
     )
 
-    Violation.objects.filter(attempt__in=attempts).delete()
-    attempts.update(total_violations=0, risk_score=0)
-
+    _clear_violations(request.user, attempts)
     return Response({"status": "cleared"})
 
 
@@ -196,9 +221,9 @@ def list_exams(request):
     return Response(serializer.data)
 
 
-@ratelimit(key='user', rate='5/m', method='POST', block=True)
 @api_view(['POST'])
 @permission_classes([IsOrgAdmin])
+@ratelimit(key='user', rate='20/m', method='POST', block=True)
 def toggle_exam(request, exam_id):
 
     org = request.user.current_organisation
@@ -212,30 +237,11 @@ def toggle_exam(request, exam_id):
         exam.save(update_fields=["is_active"])
 
         if not exam.is_active:
-            questions = list(exam.questions.prefetch_related("options").all())
-            active_attempts = ExamAttempt.objects.select_for_update().filter(
-                exam=exam, status="active"
-            )
+            active_attempts = ExamAttempt.objects.select_for_update().select_related(
+                "exam"
+            ).filter(exam=exam, status="active")
             for attempt in active_attempts:
-                score, total_points = _grade_saved_answers(attempt, exam, questions)
-                ended_at = now()
-                attempt.points_scored = score
-                attempt.total_points = total_points
-                attempt.status = "terminated"
-                attempt.end_time = ended_at
-                attempt.save(
-                    update_fields=[
-                        "points_scored",
-                        "total_points",
-                        "status",
-                        "end_time",
-                    ]
-                )
-                record_attempt_event(
-                    attempt,
-                    AttemptEvent.EventType.EXAM_TERMINATED,
-                    metadata={"reason": "exam_deactivated"},
-                )
+                finalize_attempt(attempt, "terminated", REASON_ADMIN)
 
     return Response({"status": "toggled"})
 
@@ -255,9 +261,9 @@ def list_all_users(request):
 
 # ---------------- UPDATE EXAM ----------------
 
-@ratelimit(key='user', rate='3/m', method='PATCH', block=True)
 @api_view(['PATCH'])
 @permission_classes([IsOrgAdmin])
+@ratelimit(key='user', rate='20/m', method='PATCH', block=True)
 def update_exam(request, exam_id):
 
     org = request.user.current_organisation
@@ -273,9 +279,9 @@ def update_exam(request, exam_id):
 
 # ---------------- CREATE / DELETE ----------------
 
-@ratelimit(key='user', rate='2/m', method='POST', block=True)
 @api_view(['POST'])
 @permission_classes([IsOrgAdmin])
+@ratelimit(key='user', rate='10/m', method='POST', block=True)
 def create_exam(request):
 
     serializer = ExamSerializer(data=request.data, context={"request":request})
@@ -294,9 +300,9 @@ def create_exam(request):
     return Response(serializer.errors, status=400)
 
 
-@ratelimit(key='user', rate='2/m', method='DELETE', block=True)
 @api_view(['DELETE'])
 @permission_classes([IsOrgAdmin])
+@ratelimit(key='user', rate='10/m', method='DELETE', block=True)
 def delete_exam(request, exam_id):
 
     org = request.user.current_organisation
@@ -326,7 +332,7 @@ def exam_qa(request, exam_id):
     questions = Question.objects.filter(
         exam_id=exam_id,
         exam__organisation=org
-    )
+    ).prefetch_related("options").order_by("order", "id")
 
     data = []
     for q in questions:
@@ -349,9 +355,9 @@ def exam_qa(request, exam_id):
     return Response(data)
 
 
-@ratelimit(key='user', rate='10/m', method='GET', block=True)
 @api_view(['GET'])
 @permission_classes([IsOrgAdmin])
+@ratelimit(key='user', rate='10/m', method='GET', block=True)
 def exam_export_report(request, exam_id):
 
     org = request.user.current_organisation

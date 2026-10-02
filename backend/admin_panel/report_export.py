@@ -105,6 +105,17 @@ def _rows_for_attempt(attempt):
         yield row
 
 
+# Cells starting with these are executed as formulas by Excel / Sheets.
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _safe_cell(value):
+    """Neutralise spreadsheet formula injection in user-controlled text."""
+    if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
 def generate_assessment_csv(exam):
     """Return UTF-8 CSV containing raw attempts and related examination data."""
     buffer = StringIO(newline="")
@@ -121,6 +132,6 @@ def generate_assessment_csv(exam):
     )
     for attempt in attempts:
         for row in _rows_for_attempt(attempt):
-            writer.writerow(row)
+            writer.writerow({key: _safe_cell(value) for key, value in row.items()})
 
     return buffer.getvalue()
