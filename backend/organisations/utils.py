@@ -41,11 +41,15 @@ def sync_user_organisation_context(user):
     and return org fields for auth responses.
     """
     email = user.email.lower().strip()
+    if user.is_superuser or user.is_staff:
+        # Platform accounts never join organisations.
+        return {"org_slug": None, "org_name": None, "org_plan": None, "org_role": None}
 
     pending_invites = OrganisationInvite.objects.filter(
         email__iexact=email,
         accepted=False,
         is_revoked=False,
+        declined=False,
     ).order_by("-created_at")
 
     for pending_invite in pending_invites:

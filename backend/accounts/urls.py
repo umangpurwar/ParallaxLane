@@ -4,6 +4,7 @@ from .views import (
     VerifyOTPRegisterView, VerifyOTPForgotView, LogoutView,
 )
 from .device_views import MyDevicesView, RegisterDeviceView
+from .me_views import MeView
 
 urlpatterns = [
     path("register/", RegisterView.as_view(), name="register"),
@@ -14,4 +15,5 @@ urlpatterns = [
     path("logout/", LogoutView.as_view()),
     path("devices/register/", RegisterDeviceView.as_view()),
     path("devices/me/", MyDevicesView.as_view()),
+    path("me/", MeView.as_view()),
 ]

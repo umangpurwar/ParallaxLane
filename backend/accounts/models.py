@@ -1,6 +1,7 @@
 from django.contrib.auth.models import AbstractUser
 from django.contrib.auth.hashers import make_password, check_password
 from django.db import models
+from django.db.models.functions import Lower
 
 
 class User(AbstractUser):
@@ -35,6 +36,19 @@ class User(AbstractUser):
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = []
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                Lower("email"), name="unique_user_email_ci"
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        # One canonical form for every creation path (API, createsuperuser, admin).
+        if self.email:
+            self.email = self.email.strip().lower()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.email

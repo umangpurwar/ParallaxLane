@@ -40,7 +40,7 @@ class ApiTestCase(TestCase):
         cache.clear()
         self.owner = self.make_user("owner@example.com")
         self.org = Organisation.objects.create(name="Test Org", slug="test-org", owner=self.owner,
-                                               plan="enterprise", max_exams=50)
+                                               plan="enterprise", max_exams=50, status="approved")
         OrganisationMember.objects.create(organisation=self.org, user=self.owner, role="owner")
         self.set_org(self.owner, self.org)
 

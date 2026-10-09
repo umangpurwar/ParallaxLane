@@ -156,7 +156,7 @@ class ExamFlowTests(ApiTestCase):
     def test_other_org_attempt_is_invisible(self):
         attempt_id = self.start(self.client_s, self.phone, self.exam).data["attempt_id"]
         from organisations.models import Organisation, OrganisationMember
-        other_org = Organisation.objects.create(name="Other", slug="other", owner=self.owner)
+        other_org = Organisation.objects.create(name="Other", slug="other", owner=self.owner, status="approved")
         intruder = self.make_user("intruder@example.com")
         OrganisationMember.objects.create(organisation=other_org, user=intruder, role="candidate")
         self.set_org(intruder, other_org)

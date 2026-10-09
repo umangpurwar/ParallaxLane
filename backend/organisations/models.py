@@ -1,4 +1,5 @@
 from django.db import models
+from django.db.models.functions import Lower
 from django.conf import settings
 import secrets
 import string
@@ -42,7 +43,32 @@ class Organisation(models.Model):
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
-    is_active = models.BooleanField(default=True)
+
+    # Approval lifecycle. is_active is derived from status in save() and is
+    # what every member/admin endpoint filters on, so only approved
+    # organisations can operate.
+    STATUS_PENDING = "pending"
+    STATUS_APPROVED = "approved"
+    STATUS_REJECTED = "rejected"
+    STATUS_SUSPENDED = "suspended"
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending review"),
+        (STATUS_APPROVED, "Approved"),
+        (STATUS_REJECTED, "Rejected"),
+        (STATUS_SUSPENDED, "Suspended"),
+    ]
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
+    description = models.TextField(blank=True)
+    contact_phone = models.CharField(max_length=30, blank=True)
+    website = models.URLField(blank=True)
+    review_note = models.TextField(blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="reviewed_orgs",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    submitted_at = models.DateTimeField(default=now)
+    is_active = models.BooleanField(default=False)
 
     # limits
     max_exams = models.IntegerField(default=3)
@@ -58,7 +84,27 @@ class Organisation(models.Model):
     join_code_valid_from = models.DateTimeField(null=True, blank=True, default=now)
     join_code_valid_until = models.DateTimeField(null=True, blank=True)
 
+    class Meta:
+        constraints = [
+            # One live organisation name (case-insensitive); rejected names can be reused.
+            models.UniqueConstraint(
+                Lower("name"),
+                condition=~models.Q(status="rejected"),
+                name="unique_live_org_name_ci",
+            ),
+            # A user can have only one application waiting for review.
+            models.UniqueConstraint(
+                fields=["owner"],
+                condition=models.Q(status="pending"),
+                name="one_pending_application_per_owner",
+            ),
+        ]
+
     def save(self, *args, **kwargs):
+        self.is_active = self.status == self.STATUS_APPROVED
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None and "status" in update_fields and "is_active" not in update_fields:
+            kwargs["update_fields"] = list(update_fields) + ["is_active"]
         if not self.join_code:
             self.join_code = generate_join_code()
         super().save(*args, **kwargs)
@@ -138,6 +184,7 @@ class OrganisationInvite(models.Model):
     token = models.CharField(max_length=100, unique=True)
 
     accepted = models.BooleanField(default=False)
+    declined = models.BooleanField(default=False)
 
     expires_at = models.DateTimeField(null=True, blank=True)
     is_revoked = models.BooleanField(default=False)

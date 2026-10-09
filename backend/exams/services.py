@@ -96,6 +96,7 @@ REASON_SUBMITTED = "submitted"
 REASON_DEADLINE = "deadline_expired"
 REASON_VIOLATIONS = "violation_threshold"
 REASON_ADMIN = "exam_disabled_by_admin"
+REASON_ORG_SUSPENDED = "organisation_suspended"
 
 
 def finalize_attempt(attempt, status, reason, at_time=None):

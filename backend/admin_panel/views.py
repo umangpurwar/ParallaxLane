@@ -11,6 +11,7 @@ from core.permissions import IsOrgAdmin, IsOrgInvigilator
 from datetime import timedelta
 from django.utils.timezone import now
 from exams.serializers import ExamSerializer, ExamDetailSerializer
+from .audit import audit
 from exams.services import REASON_ADMIN, finalize_attempt, grade_saved_answers as _grade_saved_answers
 from django.contrib.auth import get_user_model
 from .report_export import generate_assessment_csv
@@ -243,7 +244,8 @@ def toggle_exam(request, exam_id):
             for attempt in active_attempts:
                 finalize_attempt(attempt, "terminated", REASON_ADMIN)
 
-    return Response({"status": "toggled"})
+    audit(request.user, "exam_enabled" if exam.is_active else "exam_disabled", org, target=exam.title)
+    return Response({"status": "toggled", "is_active": exam.is_active})
 
 
 @api_view(['GET'])
@@ -273,6 +275,7 @@ def update_exam(request, exam_id):
     serializer = ExamSerializer(exam, data=request.data, partial=True, context={"request": request})
     if serializer.is_valid():
         serializer.save()
+        audit(request.user, "exam_updated", org, target=exam.title)
         return Response({"status": "updated"})
 
     return Response(serializer.errors, status=400)
@@ -292,6 +295,7 @@ def create_exam(request):
             organisation=request.user.current_organisation
         )
 
+        audit(request.user, "exam_created", exam.organisation, target=exam.title)
         return Response({
             "status": "created",
             "exam_id": exam.id
@@ -316,6 +320,7 @@ def delete_exam(request, exam_id):
                 {"error": "Cannot delete an exam that has attempt history."},
                 status=400,
             )
+        audit(request.user, "exam_deleted", org, target=exam.title)
         exam.delete()
 
     return Response({"status": "deleted"})

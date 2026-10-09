@@ -10,6 +10,9 @@ from .models import Organisation, OrganisationMember, OrganisationInvite
 from .utils import role_capacity_available, sync_user_organisation_context
 from .roles import normalize_invite_role, sanitize_stored_role
 from .plan_usage import get_organisation_usage
+from .services import ApplicationError, is_platform_account, submit_application
+from .application_views import serialize_application
+from admin_panel.audit import audit
 from core.permissions import get_membership
 from core.validators import normalize_email, validate_org_name
 from core.email_service import EmailDeliveryError, send_invitation_email
@@ -35,45 +38,22 @@ def _active_org_for_slug(slug):
 
 
 class CreateOrganisationView(APIView):
+    """Submit an organisation application. It stays pending until a super admin approves it."""
+
     permission_classes = [IsAuthenticated]
 
     @method_decorator(ratelimit(key="user", rate="3/m", method="POST", block=True))
     def post(self, request):
         if not organisation_creation_enabled():
             return Response(
-                {"detail": "Organisation creation is currently disabled."},
+                {"error": "Organisation applications are currently closed.", "code": "applications_closed"},
                 status=403,
             )
-
         try:
-            name = validate_org_name(request.data.get("name"))
-        except ValueError as exc:
-            return Response({"error": str(exc)}, status=400)
-
-        base_slug = slugify(name) or "org"
-        org = None
-        for _ in range(5):
-            slug = base_slug
-            counter = 1
-            while Organisation.objects.filter(slug=slug).exists():
-                slug = f"{base_slug}-{counter}"
-                counter += 1
-            try:
-                with transaction.atomic():
-                    org = Organisation.objects.create(name=name, slug=slug, owner=request.user)
-                    OrganisationMember.objects.create(
-                        organisation=org, user=request.user, role="owner"
-                    )
-                break
-            except IntegrityError:
-                continue  # concurrent create took the slug; retry
-        if org is None:
-            return Response({"error": "Could not allocate a unique slug, retry"}, status=409)
-
-        request.user.current_organisation = org
-        request.user.save()
-
-        return Response({"status": "created", "slug": org.slug, "name": org.name, "plan": org.plan, "role": "owner"})
+            org = submit_application(request.user, request.data)
+        except ApplicationError as exc:
+            return Response({"error": exc.message, "code": exc.code}, status=exc.status)
+        return Response(serialize_application(org), status=201)
 
 
 class MyOrganisationsView(APIView):
@@ -174,6 +154,7 @@ class InviteMemberView(APIView):
                     email=email,
                     accepted=False,
                     is_revoked=False,
+                    declined=False,
                 ).order_by("-created_at").first()
                 if existing_invite and (
                     existing_invite.expires_at is None or existing_invite.expires_at > now()
@@ -217,7 +198,8 @@ class InviteMemberView(APIView):
                     expires_at=invite.expires_at,
                 )
 
-                return Response({"status": "invite created", "invite_token": invite.token, "expires_at": invite.expires_at})
+                audit(request.user, "invite_created", org, target=email, role=role)
+                return Response({"status": "invite created", "invite_id": invite.id, "invite_token": invite.token, "expires_at": invite.expires_at})
         except Organisation.DoesNotExist:
             return Response({"detail": "Not found."}, status=404)
         except EmailDeliveryError:
@@ -236,13 +218,15 @@ class JoinByCodeView(APIView):
         if not code:
             return Response({"error": "Join code required"}, status=400)
         
-        code = code.strip().upper()
+        code = str(code).strip().upper()
+        if is_platform_account(request.user):
+            return Response({"error": "Invalid or expired join code"}, status=400)
         org = get_object_or_404(Organisation, join_code=code, is_active=True)
         
         with transaction.atomic():
             # Get organisation with select_for_update to prevent race conditions
             org = Organisation.objects.select_for_update().get(pk=org.pk)
-            if not org.is_join_code_valid():
+            if not org.is_active or not org.is_join_code_valid():
                 return Response({"error": "Invalid or expired join code"}, status=400)
 
             if org.members.filter(user=request.user).exists():
@@ -407,10 +391,12 @@ class OrganisationJoinCodeView(APIView):
 
 
 def _accept_invite_for_user(user, token):
+    if is_platform_account(user):
+        return None, Response({"error": "Invalid invite", "code": "invalid_invite"}, status=400)
     with transaction.atomic():
-        invite = get_object_or_404(
-            OrganisationInvite.objects.select_for_update(), token=token
-        )
+        invite = OrganisationInvite.objects.select_for_update().filter(token=token).first()
+        if invite is None:
+            return None, Response({"error": "Invalid invite", "code": "invalid_invite"}, status=400)
         org = Organisation.objects.select_for_update().get(pk=invite.organisation_id)
 
         if invite.accepted:
@@ -418,6 +404,9 @@ def _accept_invite_for_user(user, token):
 
         if invite.is_revoked:
             return None, Response({"error": "Invite revoked"}, status=400)
+
+        if invite.declined:
+            return None, Response({"error": "Invite was declined"}, status=400)
 
         if invite.expires_at and now() > invite.expires_at:
             return None, Response({"error": "Invite expired"}, status=400)
@@ -461,6 +450,7 @@ def _accept_invite_for_user(user, token):
 
             invite.accepted = True
             invite.save(update_fields=["accepted"])
+        audit(user, "invite_accepted", org, target=user.email, role=member.role)
 
         user.current_organisation = org
         user.save(update_fields=["current_organisation"])

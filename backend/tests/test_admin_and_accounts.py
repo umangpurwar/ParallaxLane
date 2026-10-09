@@ -152,7 +152,7 @@ class DeviceTests(ApiTestCase):
         res = self.register(self.client_s, PhoneKey("x1"))
         self.register(self.client_s, PhoneKey("x2"))
         stranger = self.make_user("stranger@example.com")
-        other = Organisation.objects.create(name="Other", slug="other", owner=stranger)
+        other = Organisation.objects.create(name="Other", slug="other", owner=stranger, status="approved")
         OrganisationMember.objects.create(organisation=other, user=stranger, role="owner")
         pending = UserDevice.objects.get(status="pending")
         res = self.client_for(stranger).post(f"/api/organisations/other/devices/{pending.id}/approve/")
