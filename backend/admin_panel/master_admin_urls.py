@@ -6,6 +6,7 @@ from .master_admin_views import (
     MasterAdminOrganisationCreationSettingView,
     MasterAdminOrganisationDetailView,
     MasterAdminOrganisationListView,
+    MasterAdminOrganisationPlanView,
     MasterAdminStatsView,
     MasterAdminStatusView,
 )
@@ -15,6 +16,7 @@ urlpatterns = [
     path("stats/", MasterAdminStatsView.as_view()),
     path("organisations/", MasterAdminOrganisationListView.as_view()),
     path("organisations/<int:organisation_id>/", MasterAdminOrganisationDetailView.as_view()),
+    path("organisations/<int:organisation_id>/plan/", MasterAdminOrganisationPlanView.as_view()),
     path("organisations/<int:organisation_id>/<str:action>/", MasterAdminOrganisationActionView.as_view()),
     path("audit-logs/", MasterAdminAuditLogView.as_view()),
     path("settings/organisation-creation/", MasterAdminOrganisationCreationSettingView.as_view()),

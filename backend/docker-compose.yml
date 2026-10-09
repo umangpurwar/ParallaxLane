@@ -8,7 +8,8 @@ services:
       # Source is baked into the image; mount ".:/app" only in local dev.
       - media_data:/app/media
     ports:
-      - "8000:8000"
+      # Bound to localhost: put HTTPS (Caddy) in front. Use "8000:8000" only for LAN testing.
+      - "127.0.0.1:8000:8000"
     environment:
       USE_REDIS_CACHE: "true"
       REDIS_URL: redis://redis:6379/0
@@ -48,9 +49,10 @@ services:
     build:
       context: ../frontend
       args:
-        VITE_API_BASE_URL: http://localhost:8000/api/
+        # nginx in the frontend image proxies /api/ to the web service: same origin, no CORS.
+        VITE_API_BASE_URL: /api/
     ports:
-      - "5173:80"
+      - "127.0.0.1:5173:80"
     restart: unless-stopped
     depends_on:
       - web

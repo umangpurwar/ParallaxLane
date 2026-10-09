@@ -45,8 +45,9 @@ class IsOrgAdmin(BasePermission):
     def has_permission(self, request, view):
         membership = get_membership(request.user)
         if not membership:
+            self.message = ORG_UNAVAILABLE
             return False
-
+        self.message = ORG_ROLE_REQUIRED
         return membership.role in ["owner", "admin"]
 
 
@@ -58,8 +59,9 @@ class IsOrgInvigilator(BasePermission):
     def has_permission(self, request, view):
         membership = get_membership(request.user)
         if not membership:
+            self.message = ORG_UNAVAILABLE
             return False
-
+        self.message = ORG_ROLE_REQUIRED
         return membership.role in ["owner", "admin", "invigilator"]
 
 

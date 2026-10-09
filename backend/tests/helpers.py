@@ -38,6 +38,14 @@ class PhoneKey:
 class ApiTestCase(TestCase):
     def setUp(self):
         cache.clear()
+        # Rate limits use fixed one minute windows; pin the clock so a slow run
+        # crossing a minute boundary cannot reset a counter mid test.
+        from unittest import mock
+        import time as real_time
+        frozen = real_time.time()
+        patcher = mock.patch("django_ratelimit.core.time", mock.Mock(time=mock.Mock(return_value=frozen)))
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.owner = self.make_user("owner@example.com")
         self.org = Organisation.objects.create(name="Test Org", slug="test-org", owner=self.owner,
                                                plan="enterprise", max_exams=50, status="approved")

@@ -399,10 +399,30 @@ def exam_results(request, exam_id):
 
         data.append({
         "username": username,
+        "name": latest.user.name,
+        "email": latest.user.email,
+        "status": latest.status,
+        "end_reason": latest.end_reason,
+        "violations": latest.total_violations,
         "attempts": len(attempts_list),
         "points_scored": latest.points_scored,
         "total_points": latest.total_points,
         "start_time": latest.start_time,
         "end_time": latest.end_time,
          })
+    return Response(data)
+
+
+# ---------------- EXAM DETAIL (ADMIN, WITH ANSWERS) ----------------
+
+@api_view(['GET'])
+@permission_classes([IsOrgAdmin])
+def exam_admin_detail(request, exam_id):
+    """Full exam for the edit form, including correct answers (admins only)."""
+    exam = get_object_or_404(
+        Exam.objects.prefetch_related("questions__options"),
+        id=exam_id, organisation=request.user.current_organisation,
+    )
+    data = ExamSerializer(exam).data
+    data["has_attempts"] = ExamAttempt.objects.filter(exam=exam).exists()
     return Response(data)

@@ -272,7 +272,10 @@ class OrganisationMembersView(APIView):
                 "id": m.id,
                 "username": m.user.username,
                 "email": m.user.email,
+                "name": m.user.name,
                 "role": m.role,
+                "is_active": m.is_active,
+                "joined_at": m.joined_at,
                 "is_exam_enabled": m.is_exam_enabled
             } 
             for m in members

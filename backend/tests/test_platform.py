@@ -365,3 +365,41 @@ class MeAndDashboardTests(PlatformTestCase):
         self.assertEqual(client.patch(f"/api/organisations/{self.org.slug}/profile/", {"name": "Renamed"}, format="json").status_code, 400)
         res = client.patch(f"/api/organisations/{self.org.slug}/profile/", {"website": "https://x.edu", "status": "approved"}, format="json")
         self.assertEqual(res.data["website"], "https://x.edu")
+
+
+class AdminExamEndpointsTests(PlatformTestCase):
+    def test_exam_admin_detail_includes_answers_for_admins_only(self):
+        exam = self.make_exam()
+        data = self.client_for(self.owner).get(f"/api/admin/exam/{exam.id}/").data
+        self.assertFalse(data["has_attempts"])
+        self.assertIn("is_correct", data["questions"][0]["options"][0])
+        student = self.add_member("student@example.com")
+        self.assertEqual(self.client_for(student).get(f"/api/admin/exam/{exam.id}/").status_code, 403)
+
+    def test_results_and_members_carry_dashboard_fields(self):
+        student = self.add_member("student@example.com")
+        phone = self.approved_phone(student)
+        exam = self.make_exam()
+        self.start(self.client_for(student, phone), phone, exam)
+        results = self.client_for(self.owner).get(f"/api/admin/exam/{exam.id}/results/").data
+        self.assertEqual(results[0]["status"], "active")
+        members = self.client_for(self.owner).get(f"/api/organisations/{self.org.slug}/members/").data
+        self.assertIn("is_active", members[0])
+
+
+class PlanManagementTests(PlatformTestCase):
+    def test_only_super_admin_changes_plan_and_limits(self):
+        url = f"/api/master-admin/organisations/{self.org.id}/plan/"
+        self.assertEqual(self.client_for(self.owner).patch(url, {"plan": "enterprise"}, format="json").status_code, 403)
+        self.assertEqual(self.super_client.patch(url, {"plan": "gold"}, format="json").status_code, 400)
+        self.assertEqual(self.super_client.patch(url, {"max_exams": -1}, format="json").status_code, 400)
+        res = self.super_client.patch(url, {"plan": "pro", "max_exams": 20}, format="json")
+        self.assertEqual((res.data["plan"], res.data["limits"]["max_exams"]), ("pro", 20))
+        self.assertTrue(AuditLog.objects.filter(action="organisation_plan_changed").exists())
+
+    def test_overview_exposes_plan_features_and_unavailable_code(self):
+        data = self.client_for(self.owner).get(f"/api/organisations/{self.org.slug}/overview/").data
+        self.assertIn("allowed_question_types", data["features"])
+        self.act(self.org.id, "suspend", note="x")
+        res = self.client_for(self.owner).get("/api/admin/exam/list/")
+        self.assertEqual(res.data["code"], "organisation_unavailable")

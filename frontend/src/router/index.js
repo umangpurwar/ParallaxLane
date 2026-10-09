@@ -1,141 +1,84 @@
-import { createRouter, createWebHistory } from "vue-router"
-import { STAFF_ROLES } from "@/services/api"
-
-import HomeView from "../views/HomeView.vue"
-import LoginView from "../views/LoginView.vue"
-import RegisterView from "../views/RegisterView.vue"
-import ExamDashboard from "../views/ExamDashboard.vue"
-import ExamPage from "../views/ExamPage.vue"
-import AdminDashboard from "../views/AdminDashboard.vue"
-import UnauthorizedView from "../views/UnauthorizedView.vue"
-import OrgHomeView from "../views/OrgHomeView.vue"
-import OrgCreateView from "../views/OrgCreateView.vue"
+import { createRouter, createWebHistory } from 'vue-router'
+import { session } from '@/stores/session'
+import { org as orgApi } from '@/api/endpoints'
 
 const routes = [
-  { path: "/", component: HomeView },
-  { path: "/login", name: "Login", component: LoginView },
-  { path: "/register", component: RegisterView },
-  { path: "/unauthorized", component: UnauthorizedView },
+  { path: '/login', name: 'login', component: () => import('@/views/auth/LoginView.vue'), meta: { public: true } },
+  { path: '/register', name: 'register', component: () => import('@/views/auth/RegisterView.vue'), meta: { public: true } },
+  { path: '/reset-password', name: 'reset-password', component: () => import('@/views/auth/ResetPasswordView.vue'), meta: { public: true } },
 
-  { path: "/create-org", component: OrgCreateView, meta: { requiresAuth: true } },
+  { path: '/', name: 'home', component: { render: () => null } },
+  { path: '/apply', name: 'apply', component: () => import('@/views/applicant/ApplyView.vue') },
+  { path: '/application', name: 'application', component: () => import('@/views/applicant/ApplicationView.vue') },
+  { path: '/members-only', name: 'members-only', component: () => import('@/views/applicant/MembersOnlyView.vue') },
+  { path: '/organisations', name: 'org-picker', component: () => import('@/views/org/OrgPickerView.vue') },
 
   {
-    path: "/org-home",
-    component: OrgHomeView,
-    meta: { requiresAuth: true }
+    path: '/platform',
+    component: () => import('@/components/PlatformLayout.vue'),
+    meta: { panel: 'platform' },
+    children: [
+      { path: '', name: 'platform-overview', component: () => import('@/views/platform/PlatformOverview.vue') },
+      { path: 'organisations', name: 'platform-orgs', component: () => import('@/views/platform/PlatformOrganisations.vue') },
+      { path: 'organisations/:id', name: 'platform-org', component: () => import('@/views/platform/PlatformOrganisationDetail.vue') },
+      { path: 'audit', name: 'platform-audit', component: () => import('@/views/platform/PlatformAudit.vue') },
+    ],
   },
-
   {
-    path: "/join-org",
-    component: () => import("../views/JoinOrgView.vue"),
-    meta: { requiresAuth: true }
+    path: '/org/:slug',
+    component: () => import('@/components/OrgLayout.vue'),
+    meta: { panel: 'org' },
+    children: [
+      { path: '', name: 'org-overview', component: () => import('@/views/org/OrgOverview.vue') },
+      { path: 'members', name: 'org-members', component: () => import('@/views/org/OrgMembers.vue') },
+      { path: 'invitations', name: 'org-invites', component: () => import('@/views/org/OrgInvites.vue') },
+      { path: 'devices', name: 'org-devices', component: () => import('@/views/org/OrgDevices.vue') },
+      { path: 'exams', name: 'org-exams', component: () => import('@/views/org/OrgExams.vue') },
+      { path: 'exams/new', name: 'org-exam-new', component: () => import('@/views/org/OrgExamEditor.vue') },
+      { path: 'exams/:examId/edit', name: 'org-exam-edit', component: () => import('@/views/org/OrgExamEditor.vue') },
+      { path: 'exams/:examId', name: 'org-exam', component: () => import('@/views/org/OrgExamDetail.vue') },
+      { path: 'settings', name: 'org-settings', component: () => import('@/views/org/OrgSettings.vue') },
+      { path: 'audit', name: 'org-audit', component: () => import('@/views/org/OrgAudit.vue') },
+    ],
   },
-
-  {
-    path: "/dashboard",
-    component: ExamDashboard,
-    meta: { requiresAuth: true, requiresOrg: true, requiresCandidate: true }
-  },
-
-  {
-    path: "/exam/:id",
-    name: "Exam",
-    component: ExamPage,
-    meta: { requiresAuth: true, requiresOrg: true, requiresCandidate: true }
-  },
-
-  {
-    path: "/auth/google",
-    name: "GoogleAuth",
-    component: () => import("../views/GoogleAuth.vue")
-  },
-
-  {
-    path: "/admin",
-    component: AdminDashboard,
-    meta: { requiresAuth: true, requiresOrg: true, requiresStaff: true }
-  },
-
-  {
-    path: "/org-settings",
-    component: () => import("../views/OrgSettingsView.vue"),
-    meta: { requiresAuth: true, requiresOrg: true, requiresStaff: true }
-  }
+  { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 
-const router = createRouter({
-  history: createWebHistory(),
-  routes
-})
+const router = createRouter({ history: createWebHistory(), routes })
 
-let isBrowserNavigation = false
+// The account the backend calls "current organisation" scopes the exam endpoints.
+let switchedTo = null
 
-window.addEventListener('popstate', () => {
-  isBrowserNavigation = true
-})
+router.beforeEach(async (to) => {
+  if (to.meta.public) {
+    return session.isSignedIn() && to.name === 'login' ? { name: 'home' } : true
+  }
+  if (!session.isSignedIn()) return { name: 'login', query: { next: to.fullPath } }
+  try {
+    await session.load()
+  } catch {
+    session.reset()
+    return { name: 'login' }
+  }
+  if (to.name === 'home') return session.homeRoute()
 
-const clearExamState = () => {
-  localStorage.removeItem("attempt_id")
-  localStorage.removeItem("active_exam_id")
-
-  Object.keys(localStorage).forEach(key => {
-    if (key.startsWith("exam_state_")) {
-      localStorage.removeItem(key)
-    }
-  })
-}
-
-const ORG_HUB_PATHS = ["/org-home", "/create-org", "/join-org", "/org-settings"]
-
-router.beforeEach((to, from) => {
-  const token = localStorage.getItem("access_token") || localStorage.getItem("token")
-  const orgSlug = localStorage.getItem("org_slug")
-  const orgRole = localStorage.getItem("org_role")
-
-  if (isBrowserNavigation && token) {
-    isBrowserNavigation = false
-
-    if (from.path.startsWith("/exam")) {
-      clearExamState()
-      return "/dashboard"
+  const panel = to.matched.find((r) => r.meta.panel)?.meta.panel
+  const me = session.state.me
+  if (panel === 'platform' && !me.is_super_admin) return session.homeRoute()
+  if (panel === 'org') {
+    const slug = to.params.slug
+    if (!session.adminOrgs().some((m) => m.slug === slug)) return session.homeRoute()
+    if (switchedTo !== slug) {
+      try {
+        await orgApi.switchTo(slug)
+        switchedTo = slug
+      } catch {
+        return session.homeRoute()
+      }
     }
   }
-
-  isBrowserNavigation = false
-
-  if (to.meta.requiresAuth && !token) {
-    if (to.path !== '/login' && to.path !== '/') {
-      return "/unauthorized"
-    }
-    return "/login"
-  }
-
-  if (token && (to.path === "/login" || to.path === "/register")) {
-    return "/org-home"
-  }
-
-  if (token && !orgSlug && to.meta.requiresOrg) {
-    return "/org-home"
-  }
-
-  if (token && !orgSlug && !ORG_HUB_PATHS.includes(to.path)) {
-    return "/org-home"
-  }
-
-  if (token && orgSlug && to.path === "/create-org") {
-    return "/org-home"
-  }
-
-  if (to.meta.requiresStaff && !STAFF_ROLES.includes(orgRole)) {
-    return "/org-home"
-  }
-
-  if (to.meta.requiresCandidate && orgRole !== "candidate") {
-    return "/org-home"
-  }
-
+  if (!panel) switchedTo = null
   return true
 })
 
 export default router
-

@@ -247,6 +247,10 @@ REST_FRAMEWORK = {
 DATA_UPLOAD_MAX_MEMORY_SIZE = config("DATA_UPLOAD_MAX_MEMORY_SIZE", default=256 * 1024, cast=int)
 
 # -----------------------------------------------------------------------------
+# Only used by the Django admin site (cookie sessions); the API uses tokens.
+CSRF_TRUSTED_ORIGINS = [o.strip() for o in config("CSRF_TRUSTED_ORIGINS", default="").split(",") if o.strip()]
+
+# -----------------------------------------------------------------------------
 # Exam client hardening (Android)
 # -----------------------------------------------------------------------------
 # Candidate exam endpoints require a registered, approved device.

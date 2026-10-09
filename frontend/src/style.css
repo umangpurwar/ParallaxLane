@@ -1,28 +1,27 @@
-/* src/style.css */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-@layer utilities {
-  /* Vertical Grid Line */
-  /* .grid-line-v {
-    @apply absolute top-0 bottom-0 w-px;
-    background-image: linear-gradient(to bottom, theme('colors.brutal.border') 50%, transparent 50%);
-    background-size: 1px 6px;
-  } */
-
-  /* Horizontal Grid Line */
-  .grid-line-h {
-    @apply absolute left-0 right-0 h-px;
-    background-image: linear-gradient(to right, theme('colors.brutal.border') 50%, transparent 50%);
-    background-size: 6px 1px;
-  }
+@layer base {
+  html { -webkit-text-size-adjust: 100%; }
+  :focus-visible { outline: 2px solid #171717; outline-offset: 2px; }
 }
 
-/* Custom scrollbar globally applied */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: theme('colors.brutal.border'); }
-::-webkit-scrollbar-thumb:hover { background: theme('colors.brutal.red'); }
+@layer components {
+  .btn { @apply inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-md border px-3 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50; }
+  .btn-primary { @apply btn border-neutral-900 bg-neutral-900 text-white hover:bg-neutral-700; }
+  .btn-secondary { @apply btn border-neutral-300 bg-white text-neutral-900 hover:bg-neutral-100; }
+  .btn-ghost { @apply btn border-transparent bg-transparent text-neutral-700 hover:bg-neutral-100; }
+  .btn-danger { @apply btn border-neutral-900 bg-white text-neutral-900 hover:bg-neutral-900 hover:text-white; }
+  .input { @apply h-9 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-900 focus:outline-none; }
+  .textarea { @apply w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus:border-neutral-900 focus:outline-none; }
+  .label { @apply mb-1 block text-sm font-medium text-neutral-800; }
+  .help { @apply mt-1 text-xs text-neutral-500; }
+  .field-error { @apply mt-1 text-xs font-medium text-neutral-900 underline decoration-neutral-400; }
+  .panel { @apply rounded-lg border border-neutral-200 bg-white; }
+  .table { @apply w-full text-left text-sm; }
+  .table th { @apply border-b border-neutral-200 px-4 py-2 text-xs font-medium uppercase tracking-wide text-neutral-500; }
+  .table td { @apply border-b border-neutral-100 px-4 py-3 align-middle; }
+  .table tbody tr:hover { @apply bg-neutral-50; }
+  .link { @apply font-medium text-neutral-900 underline decoration-neutral-300 underline-offset-2 hover:decoration-neutral-900; }
+}

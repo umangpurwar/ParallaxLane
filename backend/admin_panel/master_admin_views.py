@@ -3,6 +3,7 @@
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from django.utils.decorators import method_decorator
@@ -18,7 +19,7 @@ from exams.models import Exam, ExamAttempt
 from organisations.models import Organisation
 from organisations.services import ApplicationError, review_organisation
 
-from .audit import serialize_log
+from .audit import audit, serialize_log
 from .configuration import organisation_creation_enabled, set_organisation_creation_enabled
 from .models import AuditLog
 
@@ -114,6 +115,42 @@ class MasterAdminOrganisationDetailView(APIView):
 
     def get(self, request, organisation_id):
         return Response(_organisation_detail(get_object_or_404(_annotated(), id=organisation_id)))
+
+
+PLAN_LIMIT_FIELDS = ("max_exams", "max_candidates", "max_admins", "max_invigilators")
+
+
+class MasterAdminOrganisationPlanView(APIView):
+    """PATCH organisations/<id>/plan/ with {plan, max_exams, max_candidates, max_admins, max_invigilators}."""
+
+    permission_classes = [IsMasterAdmin]
+
+    @method_decorator(ratelimit(key="user", rate="30/m", method="PATCH", block=True))
+    def patch(self, request, organisation_id):
+        changes = {}
+        if "plan" in request.data:
+            if request.data["plan"] not in dict(Organisation.PLAN_CHOICES):
+                return Response({"error": "Unknown plan", "code": "invalid_request"}, status=400)
+            changes["plan"] = request.data["plan"]
+        for field in PLAN_LIMIT_FIELDS:
+            if field in request.data:
+                try:
+                    value = int(request.data[field])
+                except (TypeError, ValueError):
+                    value = -1
+                if not 0 <= value <= 100000:
+                    return Response({"error": f"{field} must be a whole number from 0 to 100000", "code": "invalid_request"}, status=400)
+                changes[field] = value
+        if not changes:
+            return Response({"error": "Nothing to change", "code": "invalid_request"}, status=400)
+        with transaction.atomic():
+            org = get_object_or_404(Organisation.objects.select_for_update(), id=organisation_id)
+            before = {field: getattr(org, field) for field in changes}
+            for field, value in changes.items():
+                setattr(org, field, value)
+            org.save(update_fields=list(changes))
+            audit(request.user, "organisation_plan_changed", org, target=org.name, before=before, after=changes)
+        return Response(_organisation_detail(_annotated().get(id=organisation_id)))
 
 
 class MasterAdminOrganisationActionView(APIView):
