@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ParallaxLane</string>
+    <string name="login_title">Sign in</string>
+    <string name="email">College email</string>
+    <string name="password">Password</string>
+    <string name="sign_in">Sign in</string>
+    <string name="login_note">During an exam this app pins the screen and reports when you leave it.</string>
+
+    <string name="device_title">This phone</string>
+    <string name="device_checking">Registering this phone…</string>
+    <string name="device_pending">Waiting for approval</string>
+    <string name="device_pending_note">Your exam admin has to approve this phone once before you can take exams on it. Ask them to approve it, then press Check again.</string>
+    <string name="check_again">Check again</string>
+    <string name="sign_out">Sign out</string>
+
+    <string name="exams_title">Exams</string>
+    <string name="no_exams">No exams yet. If you have not joined your college, use Join with code from the menu.</string>
+    <string name="results">Results</string>
+    <string name="join_with_code">Join with code</string>
+    <string name="join">Join</string>
+    <string name="cancel">Cancel</string>
+    <string name="start_exam">Start exam</string>
+    <string name="start_rules">Duration: %1$d minutes\n\nThe screen will be pinned. Leaving the app, using split screen or unpinning is recorded as a warning. Answers are saved as soon as you choose them.</string>
+
+    <string name="previous">Previous</string>
+    <string name="next">Next</string>
+    <string name="submit">Submit</string>
+    <string name="submit_confirm">Submit the exam now? You cannot change answers after this.</string>
+    <string name="answer_hint">Type your answer</string>
+    <string name="saved">Saved</string>
+    <string name="saving">Saving…</string>
+    <string name="not_saved">Not saved yet, it will be sent when you submit</string>
+    <string name="warning_title">Warning</string>
+    <string name="warning_message">You left the exam screen. This has been recorded (%1$d so far).</string>
+    <string name="back_blocked">You cannot go back during the exam</string>
+
+    <string name="result_title">Result</string>
+    <string name="score">%1$s / %2$s</string>
+    <string name="back_to_exams">Back to exams</string>
+
+    <string name="network_error">Could not reach the server. Check your internet connection.</string>
+    <string name="retry">Retry</string>
+</resources>
