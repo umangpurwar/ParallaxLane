@@ -1,17 +1,17 @@
 venv/
 __pycache__/
 *.pyc
+db.sqlite3
+staticfiles/
+media/
 node_modules/
+dist/
 .env
 backend/.env
 frontend/.env
 *.env.local
-db.sqlite3
-dist/
-staticfiles/
-media/
-
-# Local runtime files
 dump.rdb
 *.log
 .DS_Store
+backend/api_audit_results/
+backend/parallaxlane_api_audit*.py
