@@ -66,8 +66,6 @@ run('dashboard against the live backend', () => {
     const approved = await api.platform.act(orgId, 'approve', 'Verified by phone')
     expect(approved.status).toBe('approved')
     await expect(api.platform.act(orgId, 'approve', '')).rejects.toMatchObject({ code: 'invalid_transition' })
-    const planned = await api.platform.setPlan(orgId, { plan: 'free', max_exams: 5 })
-    expect(planned.limits.max_exams).toBe(5)
   })
 
   it('organisation admin runs the organisation', async () => {
@@ -97,9 +95,8 @@ run('dashboard against the live backend', () => {
     })
     examId = created.exam_id
     const shortAnswer = { text: 'Capital of France?', question_type: 'short_answer', points: 1, negative_points: 0, order: 1, explanation: '', correct_text_answer: 'Paris', options: [] }
-    const { features } = await api.org.overview(slug)
-    expect(features.allowed_question_types).toEqual(['mcq'])
-    await expect(api.exams.update(examId, { questions: [shortAnswer] })).rejects.toMatchObject({ status: 400 })
+    await api.exams.update(examId, { questions: [shortAnswer] })
+    expect((await api.exams.detail(examId)).questions[0].question_type).toBe('short_answer')
     const detail = await api.exams.detail(examId)
     expect(detail.questions[0].options.find((o) => o.is_correct).text).toBe('4')
     expect(detail.has_attempts).toBe(false)

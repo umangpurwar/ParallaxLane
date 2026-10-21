@@ -1,7 +1,6 @@
 from rest_framework import serializers
 from django.db import transaction
 from .models import Exam, Question, QuestionOption, ExamAttempt, Answer
-from organisations.plan_features import get_plan_features
 
 
 class QuestionOptionSerializer(serializers.ModelSerializer):
@@ -134,28 +133,7 @@ class ExamSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
-        from organisations.models import Organisation
-        request = self.context.get("request")
-        org = Organisation.objects.select_for_update().get(id=request.user.current_organisation_id)
-
-        if org.exams.count() >= org.max_exams:
-            raise serializers.ValidationError({"error": f"Exam limit reached (max {org.max_exams})"})
-
-        features = get_plan_features(org)
-        allowed_types = features.get("allowed_question_types", [])
         questions_data = validated_data.pop("questions")
-
-        if len(questions_data) > features["max_questions"]:
-            raise serializers.ValidationError({"error": "Question limit exceeded for your plan"})
-
-        for question_data in questions_data:
-            q_type = question_data.get("question_type", "mcq")
-            if q_type not in allowed_types:
-                raise serializers.ValidationError({"error": f"Question type '{q_type}' not allowed in your plan"})
-            if question_data.get("image") and not features["image_questions"]:
-                raise serializers.ValidationError({"error": "Image-based questions not allowed in your plan"})
-            if q_type == "file_upload" and not features["file_upload"]:
-                raise serializers.ValidationError({"error": "File upload questions not allowed in your plan"})
 
         exam = Exam.objects.create(**validated_data)
 
@@ -169,10 +147,6 @@ class ExamSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def update(self, instance, validated_data):
-        request = self.context.get("request")
-        org = request.user.current_organisation
-        features = get_plan_features(org)
-        allowed_types = features.get("allowed_question_types", [])
         questions_data = validated_data.pop("questions", None)
 
         # Replacing questions would orphan graded answers: lock them once
@@ -187,17 +161,6 @@ class ExamSerializer(serializers.ModelSerializer):
         instance.save()
 
         if questions_data is not None:
-            if len(questions_data) > features["max_questions"]:
-                raise serializers.ValidationError({"error": "Question limit exceeded for your plan"})
-            for question_data in questions_data:
-                q_type = question_data.get("question_type", "mcq")
-                if q_type not in allowed_types:
-                    raise serializers.ValidationError({"error": f"Question type '{q_type}' not allowed in your plan"})
-                if question_data.get("image") and not features["image_questions"]:
-                    raise serializers.ValidationError({"error": "Image-based questions not allowed in your plan"})
-                if q_type == "file_upload" and not features["file_upload"]:
-                    raise serializers.ValidationError({"error": "File upload questions not allowed in your plan"})
-
             instance.questions.all().delete()
             for question_data in questions_data:
                 options_data = question_data.pop("options", [])
@@ -211,7 +174,7 @@ class ExamSerializer(serializers.ModelSerializer):
 class AnswerSerializer(serializers.ModelSerializer):
     class Meta:
         model = Answer
-        fields = ["id", "attempt", "question", "selected_option", "text_answer", "file_upload", "is_correct"]
+        fields = ["id", "attempt", "question", "selected_option", "text_answer", "is_correct"]
 
 
 class ExamAttemptSerializer(serializers.ModelSerializer):

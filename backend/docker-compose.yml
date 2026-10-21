@@ -4,9 +4,7 @@ services:
   web:
     build: .
     command: sh -c "python manage.py migrate --noinput && gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers 3 --worker-class gthread --threads 4 --timeout 60"
-    volumes:
-      # Source is baked into the image; mount ".:/app" only in local dev.
-      - media_data:/app/media
+    # Source is baked into the image; mount ".:/app" only in local dev.
     ports:
       # Bound to localhost: put HTTPS (Caddy) in front. Use "8000:8000" only for LAN testing.
       - "127.0.0.1:8000:8000"
@@ -60,4 +58,3 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  media_data:

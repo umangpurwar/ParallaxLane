@@ -18,7 +18,7 @@ Dashboard ────┘   (/api/)                          └── Redis (ra
 ```
 
 **Roles, all enforced by the backend:**
-- **Super admin:** created by a management command. Approves, rejects, suspends and reactivates organisations, sets plans, and reads the platform audit log.
+- **Super admin:** created by a management command. Approves, rejects, suspends and reactivates organisations, and reads the platform audit log.
 - **Organisation owner or admin:** manages one approved organisation: exams, members, invitations, phone approvals, join code and audit log.
 - **Member (candidate or invigilator):** takes exams in the Android app.
 

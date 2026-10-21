@@ -6,35 +6,6 @@ from .models import Organisation, OrganisationInvite, OrganisationMember
 from .roles import sanitize_stored_role
 
 
-def role_capacity_available(org, role, exclude_invite_id=None, include_pending=True):
-    """Check a role limit using committed active memberships."""
-    active_members = org.members.filter(is_active=True, role=role).count()
-    if role == OrganisationMember.ROLE_ADMIN:
-        limit = org.max_admins
-    elif role == OrganisationMember.ROLE_INVIGILATOR:
-        limit = org.max_invigilators
-    elif role == OrganisationMember.ROLE_CANDIDATE:
-        limit = org.max_candidates
-    else:
-        return True
-
-    # Pending invitations reserve capacity at creation time. During acceptance
-    # or auto-acceptance, the current invitation is the slot being consumed.
-    reserved_slots = active_members
-    if include_pending:
-        pending_invites = OrganisationInvite.objects.filter(
-            organisation=org,
-            role=role,
-            accepted=False,
-            is_revoked=False,
-        ).filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now()))
-        if exclude_invite_id is not None:
-            pending_invites = pending_invites.exclude(id=exclude_invite_id)
-        reserved_slots += pending_invites.count()
-
-    return reserved_slots < limit
-
-
 def sync_user_organisation_context(user):
     """
     Accept pending invites for the user's email, ensure current_organisation is set,
@@ -43,7 +14,7 @@ def sync_user_organisation_context(user):
     email = user.email.lower().strip()
     if user.is_superuser or user.is_staff:
         # Platform accounts never join organisations.
-        return {"org_slug": None, "org_name": None, "org_plan": None, "org_role": None}
+        return {"org_slug": None, "org_name": None, "org_role": None}
 
     pending_invites = OrganisationInvite.objects.filter(
         email__iexact=email,
@@ -80,10 +51,6 @@ def sync_user_organisation_context(user):
                 invite.accepted = True
                 invite.save(update_fields=["accepted"])
             else:
-                if not role_capacity_available(
-                    org, safe_role, exclude_invite_id=invite.id
-                ):
-                    continue
                 if member is None:
                     member = OrganisationMember.objects.create(
                         organisation=org, user=user, role=safe_role
@@ -117,6 +84,5 @@ def sync_user_organisation_context(user):
     return {
         "org_slug": org.slug,
         "org_name": org.name,
-        "org_plan": org.plan,
         "org_role": membership.role if membership else None,
     }

@@ -22,7 +22,6 @@ from core.pagination import paginate
 from exams.models import Exam, ExamAttempt
 
 from .application_views import serialize_application
-from .plan_features import get_plan_features
 from .models import Organisation, OrganisationInvite, OrganisationMember
 from .services import ApplicationError, _clean_details
 
@@ -84,7 +83,6 @@ class OrgOverviewView(APIView):
         exams = Exam.objects.filter(organisation=org)
         return Response({
             "organisation": serialize_application(org),
-            "plan": org.plan,
             "your_role": membership.role,
             "members": {"total": sum(roles.values()), "by_role": roles},
             "exams": {
@@ -100,11 +98,6 @@ class OrgOverviewView(APIView):
                 status=UserDevice.STATUS_PENDING, user__memberships__organisation=org,
                 user__memberships__is_active=True,
             ).distinct().count(),
-            "features": get_plan_features(org),
-            "limits": {
-                "max_exams": org.max_exams, "max_candidates": org.max_candidates,
-                "max_admins": org.max_admins, "max_invigilators": org.max_invigilators,
-            },
         })
 
 

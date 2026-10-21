@@ -88,7 +88,6 @@ class CustomTokenSerializer(TokenObtainPairSerializer):
         data.update({
             "org_slug": org_data.get("org_slug"),
             "org_name": org_data.get("org_name"),
-            "org_plan": org_data.get("org_plan"),
             "org_role": org_data.get("org_role"),
         })
 

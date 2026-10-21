@@ -20,6 +20,10 @@ def set_status_from_is_active(apps, schema_editor):
             org.name = f"{org.name} ({org.id})"
             org.save(update_fields=["name"])
         seen.add(org.name.strip().lower())
+    # Run the foreign key checks queued by these updates now, so PostgreSQL
+    # allows the unique index below in the same transaction.
+    if schema_editor.connection.vendor == "postgresql":
+        schema_editor.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
 
 class Migration(migrations.Migration):

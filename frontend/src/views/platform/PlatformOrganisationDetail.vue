@@ -26,23 +26,6 @@
       <section class="space-y-3">
         <StatTile label="Active members" :value="org.member_count" />
         <StatTile label="Exams" :value="org.exam_count" />
-        <form class="panel space-y-3 p-4" @submit.prevent="savePlan">
-          <h2 class="text-sm font-semibold">Plan and limits</h2>
-          <div>
-            <label class="label" for="plan">Plan</label>
-            <select id="plan" v-model="planForm.plan" class="input">
-              <option value="free">Free (multiple choice, 10 questions)</option>
-              <option value="pro">Pro (adds true or false and short answer, 50 questions)</option>
-              <option value="enterprise">Enterprise (all types, 200 questions)</option>
-            </select>
-          </div>
-          <div class="grid grid-cols-2 gap-2">
-            <label v-for="(label, key) in limitLabels" :key="key" class="text-xs text-neutral-600">{{ label }}
-              <input v-model.number="planForm[key]" type="number" min="0" max="100000" class="input mt-1" />
-            </label>
-          </div>
-          <button type="submit" class="btn-secondary w-full" :disabled="savingPlan">{{ savingPlan ? 'Saving…' : 'Save plan' }}</button>
-        </form>
       </section>
     </div>
 
@@ -80,24 +63,6 @@ const org = ref(null)
 const loading = ref(true)
 const error = ref(null)
 const dialog = ref(null)
-const planForm = ref({})
-const savingPlan = ref(false)
-const limitLabels = { max_exams: 'Exams', max_candidates: 'Candidates', max_admins: 'Admins', max_invigilators: 'Invigilators' }
-
-function fillPlan() { planForm.value = { plan: org.value.plan, ...org.value.limits } }
-
-async function savePlan() {
-  savingPlan.value = true
-  try {
-    org.value = await platform.setPlan(org.value.id, planForm.value)
-    fillPlan()
-    toast.success('Plan updated')
-  } catch (e) {
-    toast.error(e)
-  } finally {
-    savingPlan.value = false
-  }
-}
 
 const ACTIONS = {
   pending: [
@@ -119,7 +84,6 @@ async function load() {
   error.value = null
   try {
     org.value = await platform.organisation(route.params.id)
-    fillPlan()
   } catch (e) {
     error.value = e
   } finally {

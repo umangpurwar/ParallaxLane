@@ -301,9 +301,7 @@ class SaveAnswerView(generics.GenericAPIView):
             if not attempt.exam.is_active:
                 return api_error("exam_disabled", "Exam is disabled", 403)
 
-            if "answer" not in request.data and question.question_type not in [
-                "file_upload", "image_based"
-            ]:
+            if "answer" not in request.data:
                 return api_error("invalid_request", "answer is required", 400)
             try:
                 answer, created, changed = save_answer(

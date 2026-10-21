@@ -4,8 +4,8 @@ from .models import Organisation, OrganisationMember, OrganisationInvite
 
 @admin.register(Organisation)
 class OrganisationAdmin(admin.ModelAdmin):
-    list_display = ['name', 'slug', 'plan', 'owner', 'is_active', 'created_at']
-    list_filter = ['plan', 'is_active']
+    list_display = ['name', 'slug', 'status', 'owner', 'is_active', 'created_at']
+    list_filter = ['status', 'is_active']
     search_fields = ['name', 'slug']
 
 

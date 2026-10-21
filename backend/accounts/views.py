@@ -181,7 +181,6 @@ class VerifyOTPView(APIView):
             "display_name": user.name.split(" ")[0] if user.name else user.email.split("@")[0],
             "org_slug": org_data.get("org_slug"),
             "org_name": org_data.get("org_name"),
-            "org_plan": org_data.get("org_plan"),
             "org_role": org_data.get("org_role"),
         })
 
@@ -262,7 +261,6 @@ class VerifyOTPRegisterView(APIView):
             "display_name": user.name.split(" ")[0] if user.name else user.email.split("@")[0],
             "org_slug": org_data.get("org_slug"),
             "org_name": org_data.get("org_name"),
-            "org_plan": org_data.get("org_plan"),
             "org_role": org_data.get("org_role"),
         })
 

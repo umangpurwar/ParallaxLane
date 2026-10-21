@@ -17,24 +17,8 @@ def generate_join_code():
 
 class Organisation(models.Model):
 
-    PLAN_FREE = "free"
-    PLAN_PRO = "pro"
-    PLAN_ENTERPRISE = "enterprise"
-
-    PLAN_CHOICES = [
-        (PLAN_FREE, "Free"),
-        (PLAN_PRO, "Pro"),
-        (PLAN_ENTERPRISE, "Enterprise"),
-    ]
-
     name = models.CharField(max_length=200)
     slug = models.SlugField(unique=True)
-
-    plan = models.CharField(
-        max_length=20,
-        choices=PLAN_CHOICES,
-        default=PLAN_FREE
-    )
 
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -70,13 +54,6 @@ class Organisation(models.Model):
     submitted_at = models.DateTimeField(default=now)
     is_active = models.BooleanField(default=False)
 
-    # limits
-    max_exams = models.IntegerField(default=3)
-    max_candidates = models.IntegerField(default=30)
-    proctoring_enabled = models.BooleanField(default=False)
-
-    max_admins = models.IntegerField(default=2)
-    max_invigilators = models.IntegerField(default=5)
     
     # Join Code Fields
     join_code = models.CharField(max_length=6, unique=True, db_index=True, null=True, blank=True)
@@ -130,7 +107,7 @@ class Organisation(models.Model):
         return True
 
     def __str__(self):
-        return f"{self.name} ({self.plan})"
+        return self.name
 
 
 class OrganisationMember(models.Model):

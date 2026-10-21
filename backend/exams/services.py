@@ -18,7 +18,6 @@ def save_answer(attempt, question, value, strict=True):
     defaults = {
         "selected_option": None,
         "text_answer": None,
-        "file_upload": None,
         "is_correct": None,
     }
 
@@ -48,7 +47,10 @@ def save_answer(attempt, question, value, strict=True):
                 )
             return None
         defaults["text_answer"] = value
-    # file_upload / image_based: stored as a placeholder answer (not graded).
+    else:
+        if strict:
+            raise ValueError("Unsupported question type")
+        return None
 
     existing = Answer.objects.filter(attempt=attempt, question=question).first()
     changed = False
@@ -56,7 +58,6 @@ def save_answer(attempt, question, value, strict=True):
         changed = (
             existing.selected_option_id != getattr(defaults["selected_option"], "id", None)
             or existing.text_answer != defaults["text_answer"]
-            or bool(existing.file_upload) != bool(defaults["file_upload"])
         )
 
     answer, created = Answer.objects.update_or_create(

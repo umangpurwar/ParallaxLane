@@ -52,7 +52,7 @@ Exam, monitoring and device endpoints return:
 
 | Method / path | Body | Success |
 |---|---|---|
-| `POST login/` | `{email, password}` | `{access, refresh, email, display_name, org_slug, org_name, org_plan, org_role}` (org fields may be null) |
+| `POST login/` | `{email, password}` | `{access, refresh, email, display_name, org_slug, org_name, org_role}` (org fields may be null) |
 | `POST token/refresh/` | `{refresh}` | `{access, refresh}`: **the refresh token rotates and the old one is blacklisted** |
 | `POST accounts/send-otp/` | `{email, mode: "login"\|"register"\|"forgot"}` | `{status: "If eligible, an OTP was sent"}`, always the same text |
 | `POST accounts/verify-otp/` | `{email, otp}` | Same shape as login |
@@ -72,11 +72,11 @@ Rate limits (per email unless stated):
 
 | Method / path | Body | Success |
 |---|---|---|
-| `GET organisations/my/` | | `{count, organisations: [{name, slug, role, plan, ...}]}` |
+| `GET organisations/my/` | | `{count, organisations: [{name, slug, role}]}` |
 | `POST organisations/<slug>/switch/` | | `{status: "switched", slug, ...}`. The current org is stored server-side and **shared with the web session**. |
 | `POST organisations/join-by-code/` | `{code}` | `{organisation_id, organisation_name}` |
 | `GET organisations/invites/` | | `[{token, org_name, org_slug, role, expires_at}]`: invites waiting for acceptance |
-| `POST organisations/join/` | `{code: <invite token>}` | `{status: "joined", org_slug, org_name, org_plan, org_role}` |
+| `POST organisations/join/` | `{code: <invite token>}` | `{status: "joined", org_slug, org_name, org_role}` |
 
 Invites sent to an existing account are **not** auto-accepted. Show the `invites/` inbox and let the user accept.
 

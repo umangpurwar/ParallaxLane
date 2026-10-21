@@ -47,8 +47,6 @@ class Question(models.Model):
         ("mcq", "Multiple Choice"),
         ("true_false", "True/False"),
         ("short_answer", "Short Answer"),
-        ("image_based", "Image Based"),
-        ("file_upload", "File Upload"),
     ]
 
     exam = models.ForeignKey(
@@ -77,7 +75,7 @@ class Question(models.Model):
     # short answer correct text
     correct_text_answer = models.TextField(blank=True, null=True)
 
-    # explanation (premium feature)
+    # explanation shown to admins
     explanation = models.TextField(blank=True, null=True)
 
     def __str__(self):
@@ -189,13 +187,6 @@ class Answer(models.Model):
 
     # SHORT ANSWER
     text_answer = models.TextField(blank=True, null=True)
-
-    # FILE UPLOAD / PUZZLE
-    file_upload = models.FileField(
-        upload_to="answers/",
-        null=True,
-        blank=True
-    )
 
     is_correct = models.BooleanField(null=True, blank=True)
 

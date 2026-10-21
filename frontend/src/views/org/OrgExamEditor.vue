@@ -31,9 +31,8 @@
       <section class="panel p-5">
         <div class="flex items-center justify-between">
           <h2 class="text-sm font-semibold">Questions <span class="font-normal text-neutral-500">({{ exam.questions.length }}, {{ totalPoints }} points)</span></h2>
-          <button v-if="!locked" type="button" class="btn-secondary h-8" :disabled="exam.questions.length >= maxQuestions" @click="addQuestion"><Plus class="h-4 w-4" />Add question</button>
+          <button v-if="!locked" type="button" class="btn-secondary h-8" @click="addQuestion"><Plus class="h-4 w-4" />Add question</button>
         </div>
-        <p v-if="!locked" class="mt-1 text-xs text-neutral-500">Your {{ plan }} plan allows up to {{ maxQuestions }} questions of these types: {{ questionTypes.map((t) => t.label.toLowerCase()).join(', ') }}.</p>
         <p v-if="locked" class="mt-3 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm">
           Candidates have already started this exam, so its questions are locked to keep results consistent. You can still change the details above.
         </p>
@@ -90,7 +89,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ArrowDown, ArrowUp, Plus, Trash2, X } from 'lucide-vue-next'
 import PageHeader from '@/components/PageHeader.vue'
 import StateBlock from '@/components/StateBlock.vue'
-import { exams as examApi, org as orgApi } from '@/api/endpoints'
+import { exams as examApi } from '@/api/endpoints'
 import { toast } from '@/stores/toast'
 import { fromLocalInput, toLocalInput } from '@/format'
 
@@ -113,24 +112,13 @@ const loading = ref(!isNew)
 const loadError = ref(null)
 const error = ref('')
 const saving = ref(false)
-const TYPE_LABELS = { mcq: 'Multiple choice', true_false: 'True or false', short_answer: 'Short answer' }
-const allowedTypes = ref(['mcq'])
-const maxQuestions = ref(10)
-const plan = ref('free')
-// Only types this editor can build and the plan allows; the server enforces the same rule.
-const questionTypes = computed(() => allowedTypes.value.filter((t) => TYPE_LABELS[t]).map((value) => ({ value, label: TYPE_LABELS[value] })))
+// Question types this editor has form controls for.
+const questionTypes = [
+  { value: 'mcq', label: 'Multiple choice' },
+  { value: 'true_false', label: 'True or false' },
+  { value: 'short_answer', label: 'Short answer' },
+]
 const totalPoints = computed(() => exam.value.questions.reduce((sum, q) => sum + (Number(q.points) || 0), 0))
-
-async function loadPlan() {
-  try {
-    const overview = await orgApi.overview(slug)
-    allowedTypes.value = overview.features.allowed_question_types
-    maxQuestions.value = overview.features.max_questions
-    plan.value = overview.plan
-  } catch {
-    // Keep the conservative defaults; the server still validates.
-  }
-}
 
 async function load() {
   loading.value = true
@@ -229,5 +217,5 @@ async function save() {
   }
 }
 
-onMounted(() => { loadPlan(); if (!isNew) load() })
+onMounted(() => { if (!isNew) load() })
 </script>

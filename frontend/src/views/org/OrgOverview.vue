@@ -13,19 +13,12 @@
       <RouterLink :to="{ name: 'org-devices', params: { slug } }" class="btn-primary">Review phones</RouterLink>
     </div>
 
-    <div class="mt-6 grid gap-6 lg:grid-cols-2">
+    <div class="mt-6 grid gap-6">
       <section class="panel p-5">
         <h2 class="text-sm font-semibold">Organisation</h2>
         <dl class="mt-4 space-y-3 text-sm">
           <div class="flex justify-between gap-4"><dt class="text-neutral-500">Status</dt><dd><StatusBadge :status="data.organisation.status" /></dd></div>
-          <div class="flex justify-between gap-4"><dt class="text-neutral-500">Plan</dt><dd class="capitalize">{{ data.plan }}</dd></div>
           <div class="flex justify-between gap-4"><dt class="text-neutral-500">Approved</dt><dd>{{ formatDate(data.organisation.reviewed_at) }}</dd></div>
-        </dl>
-      </section>
-      <section class="panel p-5">
-        <h2 class="text-sm font-semibold">Plan limits</h2>
-        <dl class="mt-4 space-y-3 text-sm">
-          <div v-for="(value, key) in data.limits" :key="key" class="flex justify-between gap-4"><dt class="text-neutral-500">{{ humanize(key) }}</dt><dd class="tabular-nums">{{ value }}</dd></div>
         </dl>
       </section>
     </div>
@@ -40,7 +33,7 @@ import StateBlock from '@/components/StateBlock.vue'
 import StatTile from '@/components/StatTile.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { org } from '@/api/endpoints'
-import { formatDate, humanize } from '@/format'
+import { formatDate } from '@/format'
 
 const route = useRoute()
 const slug = computed(() => route.params.slug)

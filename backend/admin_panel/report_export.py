@@ -14,7 +14,7 @@ CSV_FIELDS = [
     "attempt_start_time", "attempt_deadline", "attempt_end_time", "points_scored",
     "total_points", "percentage", "risk_score", "total_violations", "question_id",
     "question_text", "question_type", "answer_id", "selected_option_id",
-    "selected_option_text", "text_answer", "file_upload", "is_correct", "violation_id",
+    "selected_option_text", "text_answer", "is_correct", "violation_id",
     "violation_type", "violation_severity", "violation_timestamp", "violation_metadata",
     "event_id", "event_type", "event_timestamp", "event_question_id", "event_metadata",
 ]
@@ -77,7 +77,6 @@ def _rows_for_attempt(attempt):
             "selected_option_id": answer.selected_option_id,
             "selected_option_text": answer.selected_option.text if answer.selected_option else "",
             "text_answer": answer.text_answer or "",
-            "file_upload": answer.file_upload.name if answer.file_upload else "",
             "is_correct": answer.is_correct,
         })
         yield row

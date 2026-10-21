@@ -26,7 +26,6 @@ export const platform = {
   stats: () => get('master-admin/stats/'),
   organisations: (params) => get('master-admin/organisations/', params),
   organisation: (id) => get(`master-admin/organisations/${id}/`),
-  setPlan: (id, body) => patch(`master-admin/organisations/${id}/plan/`, body),
   act: (id, action, note) => post(`master-admin/organisations/${id}/${action}/`, { note }),
   auditLogs: (params) => get('master-admin/audit-logs/', params),
   setApplicationsOpen: (open) => patch('master-admin/settings/organisation-creation/', { organisation_creation_enabled: open }),

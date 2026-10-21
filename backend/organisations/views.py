@@ -7,9 +7,8 @@ from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
 
 from .models import Organisation, OrganisationMember, OrganisationInvite
-from .utils import role_capacity_available, sync_user_organisation_context
+from .utils import sync_user_organisation_context
 from .roles import normalize_invite_role, sanitize_stored_role
-from .plan_usage import get_organisation_usage
 from .services import ApplicationError, is_platform_account, submit_application
 from .application_views import serialize_application
 from admin_panel.audit import audit
@@ -71,7 +70,6 @@ class MyOrganisationsView(APIView):
                 "name": m.organisation.name,
                 "slug": m.organisation.slug,
                 "role": m.role,
-                "plan": m.organisation.plan,
             }
             for m in memberships
         ]
@@ -100,8 +98,6 @@ class SwitchOrganisationView(APIView):
             "status": "switched",
             "slug": membership.organisation.slug,
             "name": membership.organisation.name,
-            "plan": membership.organisation.plan,
-            "org_plan": membership.organisation.plan,
             "org_slug": membership.organisation.slug,
             "org_name": membership.organisation.name,
             "role": membership.role,
@@ -170,16 +166,6 @@ class InviteMemberView(APIView):
                     organisation=org, user=user
                 ).first() if user else None
 
-                # Existing active members do not consume another role slot.
-                if not member or not member.is_active:
-                    if not role_capacity_available(org, role):
-                        limit = {
-                            OrganisationMember.ROLE_ADMIN: org.max_admins,
-                            OrganisationMember.ROLE_INVIGILATOR: org.max_invigilators,
-                            OrganisationMember.ROLE_CANDIDATE: org.max_candidates,
-                        }[role]
-                        return Response({"error": f"{role.title()} limit reached (max {limit})"}, status=400)
-
                 invite = OrganisationInvite.objects.create(
                     organisation=org, email=email, role=role,
                     token=str(uuid.uuid4()), expires_at=expires_at
@@ -232,12 +218,6 @@ class JoinByCodeView(APIView):
             if org.members.filter(user=request.user).exists():
                 return Response({"error": "Already a member of this organisation"}, status=400)
 
-            active_members = org.members.filter(is_active=True)
-            
-            # Enforce candidate limit
-            if active_members.filter(role=OrganisationMember.ROLE_CANDIDATE).count() >= org.max_candidates:
-                return Response({"error": f"Candidate limit reached (max {org.max_candidates})"}, status=400)
-            
             # Create membership
             member = OrganisationMember.objects.create(
                 organisation=org, 
@@ -432,16 +412,6 @@ def _accept_invite_for_user(user, token):
             invite.accepted = True
             invite.save(update_fields=["accepted"])
         else:
-            if not role_capacity_available(
-                org, safe_role, exclude_invite_id=invite.id, include_pending=False
-            ):
-                limit = {
-                    OrganisationMember.ROLE_ADMIN: org.max_admins,
-                    OrganisationMember.ROLE_INVIGILATOR: org.max_invigilators,
-                    OrganisationMember.ROLE_CANDIDATE: org.max_candidates,
-                }[safe_role]
-                return None, Response({"error": f"{safe_role.title()} limit reached (max {limit})"}, status=400)
-
             if member is None:
                 member = OrganisationMember.objects.create(
                     organisation=org, user=user, role=safe_role
@@ -462,11 +432,9 @@ def _accept_invite_for_user(user, token):
             "status": "joined",
             "slug": org.slug,
             "name": org.name,
-            "plan": org.plan,
             "role": member.role,
             "org_slug": org.slug,
             "org_name": org.name,
-            "org_plan": org.plan,
             "org_role": member.role,
         }, None
 
@@ -494,15 +462,11 @@ class OrganisationSettingsView(APIView):
             return Response({"error": "No active organisation selected"}, status=403)
 
         org = membership.organisation
-        usage = get_organisation_usage(org)
 
         return Response({
             "organisation": {
                 "name": org.name,
                 "slug": org.slug,
-                "plan": org.plan,
-                "plan_label": org.plan.upper(),
             },
             "role": membership.role,
-            **usage,
         })

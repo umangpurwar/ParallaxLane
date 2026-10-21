@@ -3,7 +3,6 @@
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
-from django.db import transaction
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from django.utils.decorators import method_decorator
@@ -40,7 +39,6 @@ def _organisation_summary(org):
         "name": org.name,
         "slug": org.slug,
         "status": org.status,
-        "plan": org.plan,
         "owner": {"id": org.owner_id, "name": org.owner.name, "email": org.owner.email},
         "member_count": org.member_count,
         "exam_count": org.exam_count,
@@ -58,10 +56,6 @@ def _organisation_detail(org):
         "review_note": org.review_note,
         "reviewed_by": org.reviewed_by.email if org.reviewed_by_id else None,
         "reviewed_at": org.reviewed_at,
-        "limits": {
-            "max_exams": org.max_exams, "max_candidates": org.max_candidates,
-            "max_admins": org.max_admins, "max_invigilators": org.max_invigilators,
-        },
         "history": [
             serialize_log(entry)
             for entry in AuditLog.objects.filter(organisation=org).select_related("actor", "organisation")[:50]
@@ -117,42 +111,6 @@ class MasterAdminOrganisationDetailView(APIView):
         return Response(_organisation_detail(get_object_or_404(_annotated(), id=organisation_id)))
 
 
-PLAN_LIMIT_FIELDS = ("max_exams", "max_candidates", "max_admins", "max_invigilators")
-
-
-class MasterAdminOrganisationPlanView(APIView):
-    """PATCH organisations/<id>/plan/ with {plan, max_exams, max_candidates, max_admins, max_invigilators}."""
-
-    permission_classes = [IsMasterAdmin]
-
-    @method_decorator(ratelimit(key="user", rate="30/m", method="PATCH", block=True))
-    def patch(self, request, organisation_id):
-        changes = {}
-        if "plan" in request.data:
-            if request.data["plan"] not in dict(Organisation.PLAN_CHOICES):
-                return Response({"error": "Unknown plan", "code": "invalid_request"}, status=400)
-            changes["plan"] = request.data["plan"]
-        for field in PLAN_LIMIT_FIELDS:
-            if field in request.data:
-                try:
-                    value = int(request.data[field])
-                except (TypeError, ValueError):
-                    value = -1
-                if not 0 <= value <= 100000:
-                    return Response({"error": f"{field} must be a whole number from 0 to 100000", "code": "invalid_request"}, status=400)
-                changes[field] = value
-        if not changes:
-            return Response({"error": "Nothing to change", "code": "invalid_request"}, status=400)
-        with transaction.atomic():
-            org = get_object_or_404(Organisation.objects.select_for_update(), id=organisation_id)
-            before = {field: getattr(org, field) for field in changes}
-            for field, value in changes.items():
-                setattr(org, field, value)
-            org.save(update_fields=list(changes))
-            audit(request.user, "organisation_plan_changed", org, target=org.name, before=before, after=changes)
-        return Response(_organisation_detail(_annotated().get(id=organisation_id)))
-
-
 class MasterAdminOrganisationActionView(APIView):
     """POST organisations/<id>/<approve|reject|suspend|reactivate>/ with optional {note}."""
 
@@ -196,6 +154,5 @@ class MasterAdminOrganisationCreationSettingView(APIView):
         except serializers.ValidationError:
             return Response({"error": "organisation_creation_enabled must be a boolean.", "code": "invalid_request"}, status=400)
         setting = set_organisation_creation_enabled(value, request.user)
-        from .audit import audit
         audit(request.user, "applications_toggled", None, enabled=setting.boolean_value)
         return Response({"organisation_creation_enabled": setting.boolean_value})

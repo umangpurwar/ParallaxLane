@@ -18,6 +18,10 @@ def lowercase_emails(apps, schema_editor):
         if user.email != key:
             user.email = key
             user.save(update_fields=["email"])
+    # Run the foreign key checks queued by these updates now, so PostgreSQL
+    # allows the unique index below in the same transaction.
+    if schema_editor.connection.vendor == "postgresql":
+        schema_editor.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
 
 class Migration(migrations.Migration):
